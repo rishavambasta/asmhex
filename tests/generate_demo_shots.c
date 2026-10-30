@@ -60,6 +60,19 @@ int main() {
     file2_close();
     file_close();
     free(fb_data);
+
+    // 3. Generate Resized Window Shot (1360x860) showing scaled layout & more visible rows
+    win_w = 1360;
+    win_h = 860;
+    fb_pitch = 1360 * 4;
+    fb_data = malloc(1360 * 860 * 4);
+    file_open("test_data/firmware_v1.bin");
+    editor_init();
+    editor_render();
+    dump_screenshot("asmhex_resized_window.ppm");
+    file_close();
+    free(fb_data);
+
     printf("Generated demo screenshots successfully!\n");
     return 0;
 }

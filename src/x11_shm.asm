@@ -39,6 +39,8 @@ extern XSendEvent
 extern XConvertSelection
 extern XGetWindowProperty
 extern XFree
+extern XAllocSizeHints
+extern XSetWMNormalHints
 extern shmget
 extern shmat
 extern shmdt
@@ -196,6 +198,22 @@ x11_init:
     mov rsi, [rel win]
     mov rdx, r12
     call XStoreName wrt ..plt
+
+    ; Set minimum window size hints (760x360)
+    call XAllocSizeHints wrt ..plt
+    test rax, rax
+    jz .skip_size_hints
+    mov rbx, rax                      ; rbx = XSizeHints *
+    mov qword [rbx + 0], 16           ; flags = PMinSize (16)
+    mov dword [rbx + 24], 760         ; min_width = 760
+    mov dword [rbx + 28], 360         ; min_height = 360
+    mov rdi, [rel disp]
+    mov rsi, [rel win]
+    mov rdx, rbx
+    call XSetWMNormalHints wrt ..plt
+    mov rdi, rbx
+    call XFree wrt ..plt
+.skip_size_hints:
 
     ; Setup WM_DELETE_WINDOW atom
     mov rdi, [rel disp]
@@ -547,36 +565,154 @@ x11_flush:
     ret
 
 ; ------------------------------------------------------------------------------
-; x11_cleanup:
-; Detaches SHM, frees resources, closes display
+; x11_destroy_framebuffer:
+; Safely detaches SHM, frees malloc backbuffer, and destroys XImage
 ; ------------------------------------------------------------------------------
-global x11_cleanup
-x11_cleanup:
+global x11_destroy_framebuffer
+x11_destroy_framebuffer:
     push rbp
-    mov rbp, rsp                      ; rsp % 16 == 0
+    mov rbp, rsp
+    push rbx
+    sub rsp, 8                        ; 16-byte stack alignment
 
     cmp dword [rel use_shm], 1
-    jne .clean_fallback
+    jne .destroy_fallback
+
+    ; SHM path
+    mov rax, [rel ximage]
+    test rax, rax
+    jz .destroy_shm_addr
 
     ; XShmDetach(disp, &shminfo)
     mov rdi, [rel disp]
     lea rsi, [rel shminfo]
     call XShmDetach wrt ..plt
 
+    ; XSync(disp, 0)
+    mov rdi, [rel disp]
+    xor esi, esi
+    call XSync wrt ..plt
+
+.destroy_shm_addr:
     ; shmdt(shminfo.shmaddr)
     mov rdi, [rel shminfo + 16]
     test rdi, rdi
-    jz .clean_win
+    jz .destroy_shm_img
     call shmdt wrt ..plt
-    jmp .clean_win
+    mov qword [rel shminfo + 16], 0
 
-.clean_fallback:
+.destroy_shm_img:
+    mov rax, [rel ximage]
+    test rax, rax
+    jz .destroy_done
+    ; Clear ximage->data before XDestroyImage so it doesn't free() shmaddr
+    mov qword [rax + 16], 0
+    mov rdi, rax
+    call XDestroyImage wrt ..plt
+    mov qword [rel ximage], 0
+    mov qword [rel fb_data], 0
+    mov dword [rel shminfo + 8], 0
+    jmp .destroy_done
+
+.destroy_fallback:
+    ; Fallback malloc path
     mov rdi, [rel fb_data]
     test rdi, rdi
-    jz .clean_win
+    jz .destroy_fb_img
     call free wrt ..plt
+    mov qword [rel fb_data], 0
 
-.clean_win:
+.destroy_fb_img:
+    mov rax, [rel ximage]
+    test rax, rax
+    jz .destroy_done
+    mov qword [rax + 16], 0
+    mov rdi, rax
+    call XDestroyImage wrt ..plt
+    mov qword [rel ximage], 0
+
+.destroy_done:
+    add rsp, 8
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; x11_resize:
+; Resizes framebuffer to new width (edi) and height (esi)
+; edi = new_w, esi = new_h
+; Returns eax = 0 on success, negative on error
+; ------------------------------------------------------------------------------
+global x11_resize
+x11_resize:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8                        ; 16-byte alignment
+
+    ; Clamp minimum dimensions
+    cmp edi, 400
+    jge .w_ok
+    mov edi, 400
+.w_ok:
+    cmp esi, 200
+    jge .h_ok
+    mov esi, 200
+.h_ok:
+
+    ; If dimensions are unchanged, do nothing
+    cmp edi, [rel win_w]
+    jne .do_realloc
+    cmp esi, [rel win_h]
+    je .resize_done
+
+.do_realloc:
+    mov r12d, edi                     ; r12d = new_w
+    mov r13d, esi                     ; r13d = new_h
+
+    ; 1. Destroy existing framebuffer
+    call x11_destroy_framebuffer
+
+    ; 2. Update dimensions
+    mov [rel win_w], r12d
+    mov [rel win_h], r13d
+
+    ; 3. Allocate new framebuffer
+    call x11_create_framebuffer
+    test eax, eax
+    jnz .resize_fail
+
+.resize_done:
+    xor eax, eax
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+.resize_fail:
+    mov rax, -1
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; x11_cleanup:
+; Detaches SHM, frees resources, closes display
+; ------------------------------------------------------------------------------
+global x11_cleanup
+x11_cleanup:
+    push rbp
+    mov rbp, rsp
+
+    call x11_destroy_framebuffer
+
     mov rdi, [rel disp]
     mov rsi, [rel win]
     call XDestroyWindow wrt ..plt

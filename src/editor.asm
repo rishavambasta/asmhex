@@ -174,8 +174,15 @@ section .bss
     global is_diff_mode
     global diff_active_file
     global diff_count
+    global visible_rows
+    global visible_bytes
+    global editor_update_geometry
+    global editor_get_visible_rows
+    global editor_get_visible_bytes
 
     alignb 16
+    visible_rows:      resd 1            ; Dynamically computed visible rows
+    visible_bytes:     resd 1            ; visible_rows * 16
     cursor_offset:     resq 1            ; Current file byte offset
     scroll_offset:     resq 1            ; Offset of top-left visible byte
     active_pane:       resd 1            ; PANE_HEX (0) or PANE_ASCII (1)
@@ -230,10 +237,50 @@ section .bss
 section .text
 
 ; ------------------------------------------------------------------------------
+; editor_update_geometry:
+; Computes dynamic visible rows and bytes based on win_h
+; ------------------------------------------------------------------------------
+global editor_update_geometry
+editor_update_geometry:
+    mov eax, [rel win_h]
+    sub eax, SEPARATOR_Y + STATUS_H + 16
+    cmp eax, 16
+    jge .ug_calc
+    ; If win_h is uninitialized or too small, fall back to VISIBLE_ROWS
+    mov eax, 16 * VISIBLE_ROWS
+.ug_calc:
+    shr eax, 4                        ; / 16 (FONT_H)
+    mov [rel visible_rows], eax
+    shl eax, 4                        ; * 16 (BYTES_PER_ROW)
+    mov [rel visible_bytes], eax
+    ret
+
+global editor_get_visible_rows
+editor_get_visible_rows:
+    mov eax, [rel visible_rows]
+    test eax, eax
+    jnz .gvr_ret
+    call editor_update_geometry
+    mov eax, [rel visible_rows]
+.gvr_ret:
+    ret
+
+global editor_get_visible_bytes
+editor_get_visible_bytes:
+    mov eax, [rel visible_bytes]
+    test eax, eax
+    jnz .gvb_ret
+    call editor_update_geometry
+    mov eax, [rel visible_bytes]
+.gvb_ret:
+    ret
+
+; ------------------------------------------------------------------------------
 ; editor_init:
 ; ------------------------------------------------------------------------------
 global editor_init
 editor_init:
+    call editor_update_geometry
     mov qword [rel cursor_offset], 0
     mov qword [rel scroll_offset], 0
     mov dword [rel active_pane], PANE_HEX
@@ -346,16 +393,19 @@ editor_ensure_visible:
     ret
 
 .check_below:
-    ; page_bytes = VISIBLE_ROWS * 16 = 576
-    mov rdx, [rel scroll_offset]
-    add rdx, VISIBLE_ROWS * 16
-    cmp rax, rdx
+    mov edx, [rel visible_bytes]
+    mov rcx, [rel scroll_offset]
+    add rcx, rdx
+    cmp rax, rcx
     jb .visible_ok
 
     ; cursor is below visible area
-    ; scroll_offset = (cursor_offset & ~15) - (VISIBLE_ROWS - 1) * 16
+    ; scroll_offset = (cursor_offset & ~15) - (visible_rows - 1) * 16
+    mov edx, [rel visible_rows]
+    dec edx
+    shl rdx, 4                        ; (visible_rows - 1) * 16
     and rax, ~15
-    sub rax, (VISIBLE_ROWS - 1) * 16
+    sub rax, rdx
     cmp rax, 0
     jge .set_sc
     xor eax, eax
@@ -469,7 +519,7 @@ editor_move_down:
 global editor_page_up
 editor_page_up:
     mov rax, [rel cursor_offset]
-    mov rdx, VISIBLE_ROWS * 16
+    mov edx, [rel visible_bytes]
     cmp rax, rdx
     jb .pgup_zero
     sub rax, rdx
@@ -485,7 +535,8 @@ editor_page_up:
 global editor_page_down
 editor_page_down:
     mov rax, [rel cursor_offset]
-    add rax, VISIBLE_ROWS * 16
+    mov edx, [rel visible_bytes]
+    add rax, rdx
     call editor_get_diff_max_size
     test rdx, rdx
     jz .pgdn_done
@@ -1717,7 +1768,7 @@ editor_handle_click:
     cmp eax, 0
     jl .click_done
     shr eax, 4                        ; / 16
-    cmp eax, VISIBLE_ROWS
+    cmp eax, [rel visible_rows]
     jae .click_done
     mov ebx, eax                      ; row_idx in ebx
 
@@ -1841,12 +1892,13 @@ editor_handle_mouse_move:
     cmp ebx, 0
     jle .move_done
 
-    ; max_sc = (max_size > 576) ? (max_size - 576 + 15) & ~15 : 0
+    ; max_sc = (max_size > visible_bytes) ? (max_size - visible_bytes + 15) & ~15 : 0
     call editor_get_diff_max_size
     mov r8, rdx
-    cmp r8, 576
+    mov r9d, [rel visible_bytes]
+    cmp r8, r9
     jbe .move_done
-    sub r8, 576
+    sub r8, r9
     add r8, 15
     and r8, -16                       ; r8 = max_sc
 
@@ -1900,8 +1952,9 @@ editor_handle_mouse_move:
     cmp r13d, eax
     jl .calc_sel_offset
     ; Mouse is below grid: scroll down
-    mov rax, [rel scroll_offset]
-    add rax, 576
+    mov rdx, [rel scroll_offset]
+    mov eax, [rel visible_bytes]
+    add rax, rdx
     cmp rax, [rel file_size]
     jae .calc_sel_offset
     add qword [rel scroll_offset], 16
@@ -1915,9 +1968,10 @@ editor_handle_mouse_move:
     xor eax, eax
 .row_not_neg:
     shr eax, 4                        ; / 16
-    cmp eax, VISIBLE_ROWS
+    cmp eax, [rel visible_rows]
     jl .row_clamp_max
-    mov eax, VISIBLE_ROWS - 1
+    mov eax, [rel visible_rows]
+    dec eax
 .row_clamp_max:
     mov ebx, eax                      ; ebx = row_idx
 
@@ -2071,14 +2125,15 @@ render_scrollbar:
     call draw_rect
 
     ; Compute thumb
+    mov r13d, [rel visible_bytes]     ; r13d = visible_bytes
     call editor_get_diff_max_size
     mov r8, rdx
-    cmp r8, 576
+    cmp r8, r13
     jbe .sb_full_page
 
-    ; th_h = (track_h * 576) / file_size
+    ; th_h = (track_h * visible_bytes) / file_size
     mov eax, r12d
-    imul eax, 576
+    imul eax, r13d
     xor edx, edx
     div r8d
     cmp eax, SCROLL_THUMB_MIN_H
@@ -2091,9 +2146,9 @@ render_scrollbar:
 .sb_h_ok:
     mov [rel thumb_h], eax
 
-    ; max_sc = (file_size - 576 + 15) & ~15
+    ; max_sc = (file_size - visible_bytes + 15) & ~15
     mov r9, r8
-    sub r9, 576
+    sub r9, r13
     add r9, 15
     and r9, -16
     test r9, r9
@@ -3299,14 +3354,17 @@ editor_render:
     call draw_rect
 
     ; Inspector Pane background: (DATA_PANE_W, SEPARATOR_Y, win_w - DATA_PANE_W, ...)
+    mov edx, [rel win_w]
+    cmp edx, DATA_PANE_W
+    jle .skip_insp_bg
+    sub edx, DATA_PANE_W
     mov edi, DATA_PANE_W
     mov esi, SEPARATOR_Y
-    mov edx, [rel win_w]
-    sub edx, DATA_PANE_W
     mov ecx, [rel win_h]
     sub ecx, SEPARATOR_Y + STATUS_H
     mov r8d, COLOR_PANEL_BG
     call draw_rect
+.skip_insp_bg:
 
     ; Status Bar background: (0, win_h - STATUS_H, win_w, STATUS_H)
     xor edi, edi
@@ -3477,10 +3535,10 @@ editor_render:
     ; --------------------------------------------------------------------------
     ; 4. Render Data Grid Rows
     ; --------------------------------------------------------------------------
-    xor r12d, r12d                    ; r12d = row_index (0..VISIBLE_ROWS-1)
+    xor r12d, r12d                    ; r12d = row_index (0..visible_rows-1)
 
 .row_render_loop:
-    cmp r12d, VISIBLE_ROWS
+    cmp r12d, [rel visible_rows]
     jae .rows_done
 
     ; row_offset = scroll_offset + r12 * 16

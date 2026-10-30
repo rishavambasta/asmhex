@@ -36,6 +36,11 @@ test: $(BIN)
 	$(CC) -O2 tests/test_suite.c $(LIB_OBJS) $(LDFLAGS) -o $(BUILD_DIR)/test_suite
 	./$(BUILD_DIR)/test_suite
 
+test-live: $(BIN)
+	@echo "Building and running live X11 resize test..."
+	$(CC) -O2 tests/test_resize_live.c $(LIB_OBJS) $(LDFLAGS) -o $(BUILD_DIR)/test_resize_live
+	./$(BUILD_DIR)/test_resize_live
+
 benchmark: $(BIN)
 	@echo "Building and running rendering benchmark..."
 	$(CC) -O2 tests/test_benchmark.c $(LIB_OBJS) $(LDFLAGS) -o $(BUILD_DIR)/test_benchmark

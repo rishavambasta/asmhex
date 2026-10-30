@@ -39,38 +39,45 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
    - **Diff Navigation (`F7` / `F8`)**: Jump directly to the previous (`F7`) or next (`F8`) differing byte, with automatic page scrolling and wrap-around.
    - **Live Diff Inspector**: Shows total mismatch count (`Diffs: N`), active file badge (`Active: File 1/2`), File 1 vs File 2 values at cursor (`File 1: 0xaa ('*') <=> File 2: 0xbb ('+')`), and match status (`IDENTICAL [==]` or `MISMATCH [!=]`).
 
-6. **Lowercase Hexadecimal Formatting**:
+6. **Dynamic Window Resizing & Responsive Layout**:
+   - **Seamless X11 Resizing**: Maximizing, tiling (e.g. i3, Sway), or dragging window edges immediately reallocates MIT-SHM shared memory backbuffers and redraws the UI without restarting.
+   - **Adaptive Data Rows**: Grid dynamically computes visible rows based on window height (29 rows at 800x600, 37 rows at 1040x720, 59 rows at 1080p Full HD, and scales cleanly to 4K).
+   - **Proportional Geometry**: Track height, thumb geometry, and panel backgrounds stretch dynamically across resized bounds.
+   - **Cursor Visibility Retention**: Shrinking the window automatically clamps and scrolls so the cursor never gets lost off-screen.
+   - **WM Size Hints**: Advertises `PMinSize` (760x360) via `XSetWMNormalHints` to ensure window managers prevent invalid shrinking.
+
+7. **Lowercase Hexadecimal Formatting**:
    - All hexadecimal values throughout the application are rendered in elegant lowercase (`0123456789abcdef`):
      - Hex data grid bytes (`00..ff`)
      - Column headers (`00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f`)
      - 64-bit row offsets (`0000000000000000..ffffffffffffffff`)
      - Data inspector values, integers, selection ranges, and cryptographic checksums (CRC-32 & SHA-256)
 
-7. **Drag-and-Drop File Opening (XDnD Protocol)**:
+8. **Drag-and-Drop File Opening (XDnD Protocol)**:
    - Built-in support for the X Direct Save / Drag-and-Drop (XDnD version 5) protocol.
    - Drag any file from modern file managers (GNOME Files, Dolphin, Thunar, PCManFM) onto the window to open and inspect it immediately.
    - Built-in URI percent-decoding handles spaces (`%20`), special characters, and `file://` / `localhost` prefixes in pure assembly.
 
-8. **Instantaneous 64-bit Memory-Mapped I/O**:
+9. **Instantaneous 64-bit Memory-Mapped I/O**:
    - Uses direct Linux `sys_mmap` (syscall 9) and `sys_msync` (syscall 26).
    - Files of arbitrary size (from 1 byte to hundreds of gigabytes) open instantaneously with zero preloading lag.
    - Read-only protection detection: gracefully opens write-protected files in `[READ-ONLY]` mode.
    - Interactive 4KB scratch buffer automatically created when launched without arguments.
 
-9. **Live Data Inspector**:
+10. **Live Data Inspector**:
    - Real-time side inspector panel decodes the byte(s) at current cursor offset into:
      - **Offset**: 64-bit Hex & Decimal
      - **Values**: Hex, 8-bit Binary, ASCII char
      - **Integers (Little-Endian)**: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `uint64`
      - **File Statistics**: File size (human readable), cursor percentage, mode
 
-10. **Selection Cryptographic Checksums (CRC-32 & SHA-256)**:
+11. **Selection Cryptographic Checksums (CRC-32 & SHA-256)**:
     - Pure assembly implementations of standard **IEEE 802.3 CRC-32** and **FIPS 180-4 SHA-256**.
     - Press **`F12`** on any highlighted range to instantaneously compute both checksums.
     - Displayed simultaneously in the bottom status line (`CRC32: 0xXXXXXXXX | SHA256: <64-hex>`), inside the side Inspector panel, and logged cleanly to stdout.
     - If no selection is active, `F12` falls back to calculating checksums across the entire file.
 
-11. **Interactive Editing & Multi-Level Undo**:
+12. **Interactive Editing & Multi-Level Undo**:
     - Dual-pane editing: switch effortlessly between **HEX** and **ASCII** panes with `Tab` or `Space`.
     - In-place nibble editing (upper nibble followed by lower nibble, with automatic advance).
     - Multi-level **Undo Stack (`Ctrl+Z`)** (up to 4,096 modification levels).
@@ -78,7 +85,7 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
     - `Ctrl+S` commits modifications directly to disk via `msync`.
     - In Diff Mode, byte edits immediately recompute the diff count in real time!
 
-12. **Modal Command Navigation**:
+13. **Modal Command Navigation**:
     - **Goto Offset (`Ctrl+G`)**: Instant jump to any hex (`0x...`) or decimal file offset.
     - **Find Pattern (`Ctrl+F` / `F3`)**: Sub-millisecond forward and wrapped search for ASCII strings or byte sequences.
     - **Diff Navigation (`F7` / `F8`)**: Step through file differences forward and backward.

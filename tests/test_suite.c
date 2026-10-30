@@ -45,6 +45,12 @@ extern uint32_t *fb_data;
 extern int32_t win_w;
 extern int32_t win_h;
 extern int32_t fb_pitch;
+extern uint32_t visible_rows;
+extern uint32_t visible_bytes;
+extern void editor_update_geometry(void);
+extern void editor_ensure_visible(void);
+extern uint32_t editor_get_visible_rows(void);
+extern uint32_t editor_get_visible_bytes(void);
 
 extern void draw_rect_alpha(int x, int y, int w, int h, uint32_t color, int alpha);
 extern int editor_handle_key(uint64_t sym, char *ascii_buf, int ascii_len, int state);
@@ -607,8 +613,71 @@ int main() {
     assert((char)(lut_fe & 0xFF) == 'f' && (char)((lut_fe >> 8) & 0xFF) == 'e');
     printf("  -> hex_lut verified with lowercase byte representations ('0a', 'fe').\n");
 
+    // -------------------------------------------------------------------------
+    // TEST 19: Dynamic Window Resizing & Geometry Engine
+    // -------------------------------------------------------------------------
+    printf("\nTest 19: Dynamic Window Resizing & Geometry Engine...\n");
+
+    // 1. Initial 720p geometry
+    win_w = 1040;
+    win_h = 720;
+    fb_pitch = 1040 * 4;
+    editor_update_geometry();
+    uint32_t expected_rows_720 = (720 - (52 + 54 + 16)) / 16; // 37 rows
+    assert(visible_rows == expected_rows_720);
+    assert(visible_bytes == expected_rows_720 * 16);
+    assert(editor_get_visible_rows() == expected_rows_720);
+    assert(editor_get_visible_bytes() == expected_rows_720 * 16);
+    printf("  -> 1040x720 baseline: %u visible rows, %u visible bytes.\n", visible_rows, visible_bytes);
+
+    // 2. Expand to 1920x1080 (Full HD / Maximized window)
+    win_w = 1920;
+    win_h = 1080;
+    fb_pitch = 1920 * 4;
+    editor_update_geometry();
+    uint32_t expected_rows_1080 = (1080 - (52 + 54 + 16)) / 16; // 59 rows
+    assert(visible_rows == expected_rows_1080);
+    assert(visible_bytes == expected_rows_1080 * 16);
+    printf("  -> 1920x1080 expansion: scaled up to %u visible rows, %u visible bytes.\n", visible_rows, visible_bytes);
+
+    // Render at 1920x1080 to verify zero crash or buffer overflow
+    file_create_scratch();
+    uint32_t *fb_1080 = malloc(1920 * 1080 * 4);
+    assert(fb_1080 != NULL);
+    fb_data = fb_1080;
+    editor_render();
+    printf("  -> 1920x1080 frame rendered successfully with no memory faults.\n");
+    free(fb_1080);
+
+    // 3. Shrink to 800x600 (compact window)
+    win_w = 800;
+    win_h = 600;
+    fb_pitch = 800 * 4;
+    editor_update_geometry();
+    uint32_t expected_rows_600 = (600 - (52 + 54 + 16)) / 16; // 29 rows
+    assert(visible_rows == expected_rows_600);
+    assert(visible_bytes == expected_rows_600 * 16);
+    printf("  -> 800x600 compact: scaled down to %u visible rows, %u visible bytes.\n", visible_rows, visible_bytes);
+
+    uint32_t *fb_600 = malloc(800 * 600 * 4);
+    assert(fb_600 != NULL);
+    fb_data = fb_600;
+    editor_render();
+    printf("  -> 800x600 frame rendered successfully with clean clipping.\n");
+    free(fb_600);
+
+    // 4. Cursor visibility preservation on window resize/shrink
+    // Place cursor at offset 800
+    cursor_offset = 800;
+    editor_ensure_visible();
+    // Offset 800 must be in [scroll_offset, scroll_offset + visible_bytes)
+    assert(cursor_offset >= scroll_offset);
+    assert(cursor_offset < scroll_offset + visible_bytes);
+    printf("  -> editor_ensure_visible adjusted scroll_offset to 0x%lx, keeping cursor visible.\n", scroll_offset);
+    file_close();
+
     printf("\n========================================================\n");
-    printf("  ALL 18 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 19 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

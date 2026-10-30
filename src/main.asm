@@ -19,6 +19,7 @@ extern win_h
 extern x11_init
 extern x11_flush
 extern x11_cleanup
+extern x11_resize
 extern dump_screenshot
 extern XNextEvent
 extern XLookupString
@@ -52,6 +53,8 @@ extern init_crc32_table
 extern init_renderer_luts
 extern editor_init
 extern editor_render
+extern editor_update_geometry
+extern editor_ensure_visible
 extern editor_handle_key
 extern editor_handle_click
 extern editor_handle_mouse_move
@@ -232,6 +235,8 @@ main:
     call x11_init
     test eax, eax
     jnz .disp_error
+
+    call editor_update_geometry
 
     ; 5. First Frame Render
     call editor_render
@@ -480,6 +485,27 @@ main:
     cmp eax, ConfigureNotify
     jne .event_loop
 
+    ; Only process ConfigureNotify events intended for our application window
+    ; event_buf + 40 is event.xconfigure.window
+    mov rax, [rel event_buf + 40]
+    cmp rax, [rel win]
+    jne .event_loop
+
+    ; event_buf + 56 is event.xconfigure.width
+    ; event_buf + 60 is event.xconfigure.height
+    mov edi, [rel event_buf + 56]     ; new width
+    mov esi, [rel event_buf + 60]     ; new height
+
+    ; Compare with current window dimensions
+    cmp edi, [rel win_w]
+    jne .do_resize
+    cmp esi, [rel win_h]
+    je .event_loop                    ; Dimensions unchanged (e.g. window move)
+
+.do_resize:
+    call x11_resize
+    call editor_update_geometry
+    call editor_ensure_visible
     call editor_render
     call x11_flush
     jmp .event_loop

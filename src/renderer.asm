@@ -9,14 +9,14 @@ extern win_w
 extern win_h
 extern fb_data
 extern fb_pitch
+extern snprintf
 
 section .rodata
     align 16
     font_bitmap: incbin "font.bin"     ; 4096 bytes of 8x16 Terminus bold font
     hex_chars:   db "0123456789ABCDEF"
     hex_chars_l: db "0123456789abcdef"
-    ppm_hdr:     db "P6", 10, "1040 720", 10, "255", 10
-    ppm_hdr_len equ $ - ppm_hdr
+    ppm_fmt:     db "P6", 10, "%d %d", 10, "255", 10, 0
 
 section .bss
     global hex_lut
@@ -25,7 +25,8 @@ section .bss
     hex_lut:       resw 256           ; 256 * 2 bytes = 512 bytes
     bin_lut:       resq 256           ; 256 * 8 bytes = 2048 bytes (8 chars per byte)
     temp_str_buf:  resb 128           ; Temporary scratch string formatting buffer
-    ppm_line_buf:  resb 2048 * 3      ; Buffer for one scanline of RGB bytes (up to 2048 px)
+    ppm_hdr_buf:   resb 64            ; Dynamic PPM header buffer
+    ppm_line_buf:  resb 4096 * 3      ; Buffer for one scanline of RGB bytes (up to 4K px)
 
 section .text
 
@@ -367,10 +368,14 @@ draw_rect_alpha:
 global draw_glyph
 draw_glyph:
     ; Bounds check
-    cmp edi, [rel win_w]
-    jge .glyph_done
-    cmp esi, [rel win_h]
-    jge .glyph_done
+    mov eax, [rel win_w]
+    sub eax, 8
+    cmp edi, eax
+    jg .glyph_done
+    mov eax, [rel win_h]
+    sub eax, 16
+    cmp esi, eax
+    jg .glyph_done
 
     mov r9, [rel fb_data]
     test r9, r9
@@ -454,10 +459,14 @@ draw_glyph:
 global draw_glyph_transparent
 draw_glyph_transparent:
     ; Bounds check
-    cmp edi, [rel win_w]
-    jge .gt_done
-    cmp esi, [rel win_h]
-    jge .gt_done
+    mov eax, [rel win_w]
+    sub eax, 8
+    cmp edi, eax
+    jg .gt_done
+    mov eax, [rel win_h]
+    sub eax, 16
+    cmp esi, eax
+    jg .gt_done
 
     mov r9, [rel fb_data]
     test r9, r9
@@ -896,11 +905,21 @@ dump_screenshot:
     jl .ppm_open_err
     mov r13d, eax                     ; r13d = fd
 
+    ; Format dynamic PPM header
+    lea rdi, [rel ppm_hdr_buf]
+    mov esi, 64
+    lea rdx, [rel ppm_fmt]
+    mov ecx, [rel win_w]
+    mov r8d, [rel win_h]
+    xor eax, eax
+    call snprintf wrt ..plt
+    mov rbx, rax                      ; rbx = header len
+
     ; Write PPM header
     mov rax, SYS_write
     mov edi, r13d
-    lea rsi, [rel ppm_hdr]
-    mov edx, ppm_hdr_len
+    lea rsi, [rel ppm_hdr_buf]
+    mov rdx, rbx
     syscall
 
     ; Convert each scanline from 32-bit ARGB to 24-bit RGB and write to file
