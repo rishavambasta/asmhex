@@ -7,49 +7,58 @@
 %include "macros.inc"
 
 section .data
+    default_blank_name:   db "untitled.bin", 0
     default_scratch_name: db "[ Scratch Buffer - 4 KB ]", 0
     welcome_banner:
         db "================================================================", 10
-        db "  AsmHex v1.0 - Pure x86_64 Assembly Graphical Hex Editor       ", 10
+        db "  AsmHex v1.1 - Pure x86_64 Assembly Graphical Hex Editor       ", 10
         db "  Developed for ultra-fast, zero-latency binary editing.        ", 10
         db "================================================================", 10
         db "  * Use Arrows or Mouse to navigate bytes                       ", 10
         db "  * Tab / Space: Switch between Hex and ASCII editing panes     ", 10
         db "  * Type hex digits (0-9, A-F) in Hex pane to edit nibbles      ", 10
-        db "  * Type characters directly in ASCII pane to overwrite bytes   ", 10
-        db "  * Ctrl+S: Save changes (msync)                                ", 10
+        db "  * Type characters directly in ASCII pane to write bytes       ", 10
+        db "  * Appending past EOF automatically extends file size          ", 10
+        db "  * Ctrl+S: Save changes to disk (safe copy-on-write)           ", 10
         db "  * Ctrl+Z: Undo modifications                                  ", 10
         db "  * Ctrl+G: Jump directly to offset (hex or dec)                ", 10
         db "  * Ctrl+F: Search byte patterns or ASCII strings               ", 10
-        db "  * Ctrl+Q or Esc: Quit application                             ", 10
+        db "  * F3 / Shift+F3: Next / Previous Diff (in Diff Mode)          ", 10
+        db "  * Ctrl+Q or Esc: Quit without saving                          ", 10
         db "================================================================", 10
     welcome_banner_len equ $ - welcome_banner
 
 section .bss
     global file_ptr
     global file_size
+    global file_capacity
     global file_fd
     global is_readonly
     global is_scratch
     global file_path
     global file2_ptr
     global file2_size
+    global file2_capacity
     global file2_fd
     global is_readonly2
     global file2_path
 
+    extern is_dirty
+
     align 16
     file_ptr:       resq 1            ; Pointer to mapped memory
     file_size:      resq 1            ; Total file size in bytes
-    file_fd:        resd 1            ; File descriptor
+    file_capacity:  resq 1            ; Allocated memory capacity in bytes
+    file_fd:        resd 1            ; File descriptor (-1 if new/unsaved)
     is_readonly:    resd 1            ; 1 if read-only, 0 if read-write
-    is_scratch:     resd 1            ; 1 if anonymous scratch buffer
+    is_scratch:     resd 1            ; 1 if legacy scratch buffer
     file_path:      resb 512          ; Path to opened file
     stat_buf:       resb 144          ; struct stat buffer
 
     ; Secondary file for comparison / diffing
     file2_ptr:      resq 1            ; Pointer to mapped memory for file 2
     file2_size:     resq 1            ; Total file 2 size in bytes
+    file2_capacity: resq 1            ; Allocated capacity for file 2
     file2_fd:       resd 1            ; File 2 descriptor
     is_readonly2:   resd 1            ; 1 if read-only, 0 if read-write
     file2_path:     resb 512          ; Path to opened file 2
@@ -60,6 +69,7 @@ section .text
 ; ------------------------------------------------------------------------------
 ; file_open:
 ; Opens and memory-maps file at rdi (null-terminated path string)
+; Uses anonymous private memory (safe copy-on-write) + 64KB headroom
 ; Returns rax = 0 on success, negative error code on failure
 ; ------------------------------------------------------------------------------
 global file_open
@@ -72,6 +82,9 @@ file_open:
     sub rsp, 8                        ; 16-byte alignment (32 + 8 = 40)
 
     mov r12, rdi                      ; save path pointer
+
+    ; If a file was already open, close it first
+    call file_close
 
     ; Copy path to file_path buffer
     lea rsi, [r12]
@@ -134,14 +147,21 @@ file_open:
     mov rax, [rel stat_buf + 48]
     mov [rel file_size], rax
 
-    ; Check if file size is 0
-    test rax, rax
-    jnz .do_mmap
+    ; capacity = max(file_size + 65536, 65536), page-aligned (4096)
+    mov rsi, rax
+    add rsi, 65536
+    cmp rsi, 65536
+    jae .cap_aligned
+    mov rsi, 65536
+.cap_aligned:
+    add rsi, 4095
+    and rsi, -4096
+    mov [rel file_capacity], rsi
 
-    ; Empty file: allocate 4KB scratch buffer so editor doesn't crash
+    ; Allocate anonymous private memory
     mov rax, SYS_mmap
-    xor edi, edi
-    mov esi, 4096
+    xor edi, edi                      ; addr = NULL
+    ; rsi = length (file_capacity)
     mov edx, PROT_READ | PROT_WRITE
     mov r10d, MAP_PRIVATE | MAP_ANONYMOUS
     mov r8, -1
@@ -152,38 +172,38 @@ file_open:
     jae .mmap_failed
 
     mov [rel file_ptr], rax
-    mov qword [rel file_size], 0
-    xor eax, eax
-    jmp .open_done
 
-.do_mmap:
-    ; prot = is_readonly ? PROT_READ : (PROT_READ | PROT_WRITE)
-    mov edx, PROT_READ | PROT_WRITE
-    cmp dword [rel is_readonly], 1
-    jne .prot_set
-    mov edx, PROT_READ
-.prot_set:
+    ; Read file contents into allocated buffer
+    mov r12, [rel file_size]
+    test r12, r12
+    jz .read_done
 
-    ; flags = is_readonly ? MAP_PRIVATE : MAP_SHARED
-    mov r10d, MAP_SHARED
-    cmp dword [rel is_readonly], 1
-    jne .flags_set
-    mov r10d, MAP_PRIVATE
-.flags_set:
-
-    mov rax, SYS_mmap
-    xor edi, edi                      ; addr = NULL
-    mov rsi, [rel file_size]          ; length = file_size
-    ; edx = prot
-    ; r10d = flags
-    mov r8d, [rel file_fd]            ; fd
-    xor r9d, r9d                      ; offset = 0
+    mov rbx, rax                      ; dest buffer
+    xor r13, r13                      ; offset read so far
+.read_loop:
+    cmp r13, r12
+    jae .read_done
+    mov rax, SYS_read
+    mov edi, [rel file_fd]
+    lea rsi, [rbx + r13]
+    mov rdx, r12
+    sub rdx, r13
     syscall
 
-    cmp rax, -4095
-    jae .mmap_failed
+    cmp rax, 0
+    jle .read_done                    ; EOF or error
+    add r13, rax
+    jmp .read_loop
 
-    mov [rel file_ptr], rax
+.read_done:
+    ; Zero out remaining headroom up to file_capacity
+    mov rdi, [rel file_ptr]
+    add rdi, [rel file_size]
+    mov rcx, [rel file_capacity]
+    sub rcx, [rel file_size]
+    xor al, al
+    rep stosb
+
     xor eax, eax                      ; return 0 (success)
     jmp .open_done
 
@@ -192,7 +212,6 @@ file_open:
     jmp .open_done
 
 .fstat_failed:
-    ; Close fd on fstat fail
     mov rax, SYS_close
     mov edi, [rel file_fd]
     syscall
@@ -201,7 +220,6 @@ file_open:
     jmp .open_done
 
 .mmap_failed:
-    ; Close fd on mmap fail
     mov rax, SYS_close
     mov edi, [rel file_fd]
     syscall
@@ -209,6 +227,142 @@ file_open:
     mov rax, -3
 
 .open_done:
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; file_create_blank:
+; Creates a blank file ready for writing (untitled.bin, 0 bytes, 64KB capacity)
+; Returns rax = 0 on success, negative on error
+; ------------------------------------------------------------------------------
+global file_create_blank
+file_create_blank:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    sub rsp, 8
+
+    call file_close
+
+    lea rsi, [rel default_blank_name]
+    lea rdi, [rel file_path]
+    mov ecx, 64
+.copy_blank_name:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    test al, al
+    jnz .copy_blank_name
+
+    ; Allocate 64KB anonymous memory
+    mov rax, SYS_mmap
+    xor edi, edi
+    mov esi, 65536
+    mov edx, PROT_READ | PROT_WRITE
+    mov r10d, MAP_PRIVATE | MAP_ANONYMOUS
+    mov r8, -1
+    xor r9d, r9d
+    syscall
+
+    cmp rax, -4095
+    jae .blank_fail
+
+    mov [rel file_ptr], rax
+    mov qword [rel file_capacity], 65536
+    mov qword [rel file_size], 0
+    mov dword [rel file_fd], -1
+    mov dword [rel is_readonly], 0
+    mov dword [rel is_scratch], 0
+
+    ; Zero out buffer
+    mov rdi, rax
+    xor eax, eax
+    mov ecx, 65536 / 8
+    rep stosq
+
+    xor eax, eax
+    add rsp, 8
+    pop rbx
+    pop rbp
+    ret
+
+.blank_fail:
+    mov rax, -1
+    add rsp, 8
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; file_ensure_capacity:
+; Grows file_ptr anonymous buffer if needed_bytes > file_capacity
+; Arguments: rdi = needed_bytes
+; Returns: rax = 0 on success, negative on error
+; ------------------------------------------------------------------------------
+global file_ensure_capacity
+file_ensure_capacity:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8
+
+    mov r12, rdi                      ; needed_bytes
+    mov rbx, [rel file_capacity]
+    cmp r12, rbx
+    jbe .cap_ok
+
+    ; new_capacity = max(needed_bytes + 65536, file_capacity * 2)
+    mov r13, rbx
+    shl r13, 1
+    lea rax, [r12 + 65536]
+    cmp rax, r13
+    cmova r13, rax
+
+    ; Align to 4096 page boundary
+    add r13, 4095
+    and r13, -4096
+
+    ; SYS_mremap(file_ptr, file_capacity, new_capacity, MREMAP_MAYMOVE)
+    mov rax, SYS_mremap
+    mov rdi, [rel file_ptr]
+    mov rsi, [rel file_capacity]
+    mov rdx, r13
+    mov r10d, MREMAP_MAYMOVE
+    xor r8d, r8d
+    syscall
+
+    cmp rax, -4095
+    jae .ensure_fail
+
+    mov [rel file_ptr], rax
+
+    ; Zero out newly added memory
+    mov rdi, rax
+    add rdi, [rel file_capacity]
+    mov rcx, r13
+    sub rcx, [rel file_capacity]
+    xor al, al
+    rep stosb
+
+    mov [rel file_capacity], r13
+    xor eax, eax
+    jmp .ensure_done
+
+.cap_ok:
+    xor eax, eax
+    jmp .ensure_done
+
+.ensure_fail:
+    mov rax, -1
+
+.ensure_done:
     add rsp, 8
     pop r13
     pop r12
@@ -225,7 +379,9 @@ file_create_scratch:
     push rbp
     mov rbp, rsp
     push rbx
-    sub rsp, 8                        ; 16-byte alignment (16 + 8 = 24)
+    sub rsp, 8                        ; 16-byte alignment
+
+    call file_close
 
     ; mmap 4096 bytes anonymous
     mov rax, SYS_mmap
@@ -242,6 +398,7 @@ file_create_scratch:
 
     mov [rel file_ptr], rax
     mov qword [rel file_size], 4096
+    mov qword [rel file_capacity], 4096
     mov dword [rel file_fd], -1
     mov dword [rel is_readonly], 0
     mov dword [rel is_scratch], 1
@@ -297,52 +454,119 @@ file_create_scratch:
 
 ; ------------------------------------------------------------------------------
 ; file_save:
-; Flushes memory map to disk using sys_msync
+; Explicitly saves memory contents to disk (copy-on-write commit)
+; Truncates to file_size and calls fsync
 ; Returns 0 on success, negative on error
 ; ------------------------------------------------------------------------------
 global file_save
 file_save:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8
+
     cmp dword [rel is_readonly], 1
     je .save_ro_err
 
     cmp dword [rel is_scratch], 1
     je .save_scratch_err
 
-    mov rdi, [rel file_ptr]
-    test rdi, rdi
+    mov rbx, [rel file_ptr]
+    test rbx, rbx
     jz .save_no_file
 
-    mov rsi, [rel file_size]
-    test rsi, rsi
-    jz .save_empty
+    ; If file_fd == -1, create file: SYS_open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644o)
+    mov edi, [rel file_fd]
+    cmp edi, 0
+    jge .have_fd
 
-    ; sys_msync(file_ptr, file_size, MS_SYNC)
-    mov rax, SYS_msync
-    mov edx, MS_SYNC
+    mov rax, SYS_open
+    lea rdi, [rel file_path]
+    mov esi, O_CREAT | O_WRONLY | O_TRUNC
+    mov edx, 420                      ; 0644 octal
     syscall
 
-    test rax, rax
-    jnz .save_sys_err
-    xor eax, eax
-    ret
+    cmp rax, 0
+    jl .save_sys_err
+    mov [rel file_fd], eax
 
-.save_empty:
+.have_fd:
+    ; Seek to 0: SYS_lseek(fd, 0, SEEK_SET)
+    mov rax, SYS_lseek
+    mov edi, [rel file_fd]
+    xor esi, esi
+    xor edx, edx
+    syscall
+
+    cmp rax, 0
+    jl .save_sys_err
+
+    ; Write file_size bytes
+    mov r12, [rel file_size]
+    xor r13, r13
+.save_write_loop:
+    cmp r13, r12
+    jae .save_write_done
+
+    mov rax, SYS_write
+    mov edi, [rel file_fd]
+    lea rsi, [rbx + r13]
+    mov rdx, r12
+    sub rdx, r13
+    syscall
+
+    cmp rax, 0
+    jle .save_sys_err
+    add r13, rax
+    jmp .save_write_loop
+
+.save_write_done:
+    ; ftruncate(fd, file_size)
+    mov rax, SYS_ftruncate
+    mov edi, [rel file_fd]
+    mov rsi, [rel file_size]
+    syscall
+
+    cmp rax, 0
+    jl .save_sys_err
+
+    ; fsync(fd)
+    mov rax, SYS_fsync
+    mov edi, [rel file_fd]
+    syscall
+
+    cmp rax, 0
+    jl .save_sys_err
+
+    ; Clear dirty flag
+    mov dword [rel is_dirty], 0
+
     xor eax, eax
-    ret
+    jmp .save_done
 
 .save_ro_err:
-    mov rax, -1                       ; File is read-only
-    ret
+    mov rax, -1
+    jmp .save_done
 
 .save_scratch_err:
-    mov rax, -2                       ; Cannot save scratch without filename
-    ret
+    mov rax, -2
+    jmp .save_done
 
 .save_no_file:
     mov rax, -3
-    ret
+    jmp .save_done
 
 .save_sys_err:
+    mov rax, -4
+
+.save_done:
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
     ret
 
 ; ------------------------------------------------------------------------------
@@ -355,14 +579,16 @@ file_close:
     test rdi, rdi
     jz .no_unmap
 
-    mov rsi, [rel file_size]
+    mov rsi, [rel file_capacity]
     test rsi, rsi
     jnz .do_unmap
-    mov rsi, 4096                     ; unmap scratch size
+    mov rsi, 65536
 .do_unmap:
     mov rax, SYS_munmap
     syscall
     mov qword [rel file_ptr], 0
+    mov qword [rel file_capacity], 0
+    mov qword [rel file_size], 0
 
 .no_unmap:
     mov edi, [rel file_fd]
@@ -415,17 +641,7 @@ file2_open:
     mov byte [rdi], 0
 .f2_path_copied:
 
-    ; Try opening with O_RDWR (2)
-    mov rax, SYS_open
-    lea rdi, [rel file2_path]
-    mov esi, O_RDWR
-    xor edx, edx
-    syscall
-
-    cmp rax, 0
-    jge .f2_opened_rw
-
-    ; Open failed with RDWR, try O_RDONLY (0)
+    ; Open read-only
     mov rax, SYS_open
     lea rdi, [rel file2_path]
     mov esi, O_RDONLY
@@ -435,16 +651,9 @@ file2_open:
     cmp rax, 0
     jl .f2_open_failed
 
-    ; Opened read-only
-    mov [rel file2_fd], eax
-    mov dword [rel is_readonly2], 1
-    jmp .f2_get_fstat
-
-.f2_opened_rw:
     mov [rel file2_fd], eax
     mov dword [rel is_readonly2], 0
 
-.f2_get_fstat:
     ; fstat(fd, &stat_buf2)
     mov rax, SYS_fstat
     mov edi, [rel file2_fd]
@@ -458,41 +667,52 @@ file2_open:
     mov rax, [rel stat_buf2 + 48]
     mov [rel file2_size], rax
 
-    ; If size == 0, return error (empty file)
-    test rax, rax
-    jz .f2_mmap_failed
+    ; capacity = max(file2_size + 4096, 4096), page aligned
+    mov rsi, rax
+    add rsi, 4096
+    add rsi, 4095
+    and rsi, -4096
+    mov [rel file2_capacity], rsi
 
-    ; mmap:
-    cmp dword [rel is_readonly2], 1
-    je .f2_mmap_ro
-
-    ; MMap Read-Write
+    ; Allocate anonymous private memory
     mov rax, SYS_mmap
     xor edi, edi
-    mov rsi, [rel file2_size]
+    ; rsi = file2_capacity
     mov edx, PROT_READ | PROT_WRITE
-    mov r10d, MAP_SHARED
-    mov r8d, [rel file2_fd]
-    xor r9d, r9d
-    syscall
-    jmp .f2_check_mmap
-
-.f2_mmap_ro:
-    mov rax, SYS_mmap
-    xor edi, edi
-    mov rsi, [rel file2_size]
-    mov edx, PROT_READ
-    mov r10d, MAP_PRIVATE
-    mov r8d, [rel file2_fd]
+    mov r10d, MAP_PRIVATE | MAP_ANONYMOUS
+    mov r8, -1
     xor r9d, r9d
     syscall
 
-.f2_check_mmap:
     cmp rax, -4095
     jae .f2_mmap_failed
 
     mov [rel file2_ptr], rax
-    xor eax, eax                      ; return 0 (success)
+
+    ; Read file2 contents
+    mov r12, [rel file2_size]
+    test r12, r12
+    jz .f2_read_done
+
+    mov rbx, rax
+    xor r13, r13
+.f2_read_loop:
+    cmp r13, r12
+    jae .f2_read_done
+    mov rax, SYS_read
+    mov edi, [rel file2_fd]
+    lea rsi, [rbx + r13]
+    mov rdx, r12
+    sub rdx, r13
+    syscall
+
+    cmp rax, 0
+    jle .f2_read_done
+    add r13, rax
+    jmp .f2_read_loop
+
+.f2_read_done:
+    xor eax, eax
     jmp .f2_done
 
 .f2_mmap_failed:
@@ -507,6 +727,7 @@ file2_open:
 .f2_open_failed:
     mov qword [rel file2_ptr], 0
     mov qword [rel file2_size], 0
+    mov qword [rel file2_capacity], 0
     mov rax, -1
 
 .f2_done:
@@ -527,12 +748,16 @@ file2_close:
     test rdi, rdi
     jz .f2_no_unmap
 
-    mov rsi, [rel file2_size]
+    mov rsi, [rel file2_capacity]
     test rsi, rsi
-    jz .f2_no_unmap
+    jnz .f2_do_unmap
+    mov rsi, 4096
+.f2_do_unmap:
     mov rax, SYS_munmap
     syscall
     mov qword [rel file2_ptr], 0
+    mov qword [rel file2_capacity], 0
+    mov qword [rel file2_size], 0
 
 .f2_no_unmap:
     mov edi, [rel file2_fd]
@@ -545,4 +770,5 @@ file2_close:
 .f2_no_close:
     mov qword [rel file2_ptr], 0
     mov qword [rel file2_size], 0
+    mov qword [rel file2_capacity], 0
     ret

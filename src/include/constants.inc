@@ -151,10 +151,14 @@ SYS_open            equ 2
 SYS_close           equ 3
 SYS_stat            equ 4
 SYS_fstat           equ 5
+SYS_lseek           equ 8
 SYS_mmap            equ 9
 SYS_munmap          equ 11
+SYS_mremap          equ 25
 SYS_msync           equ 26
 SYS_exit            equ 60
+SYS_fsync           equ 74
+SYS_ftruncate       equ 77
 SYS_newfstatat      equ 262
 
 ; File open flags & protections
@@ -162,6 +166,7 @@ O_RDONLY            equ 0
 O_WRONLY            equ 1
 O_RDWR              equ 2
 O_CREAT             equ 64
+O_TRUNC             equ 512
 
 PROT_READ           equ 1
 PROT_WRITE          equ 2
@@ -169,6 +174,7 @@ MAP_SHARED          equ 1
 MAP_PRIVATE         equ 2
 MAP_ANONYMOUS       equ 32
 MS_SYNC             equ 4
+MREMAP_MAYMOVE      equ 1
 
 ; Maximum modifications tracked in undo stack
 MAX_UNDO            equ 4096

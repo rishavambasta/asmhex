@@ -13,8 +13,12 @@ extern void editor_init(void);
 extern void editor_render(void);
 extern int file_open(const char *path);
 extern int file_create_scratch(void);
+extern int file_create_blank(void);
+extern int file_ensure_capacity(uint64_t needed);
 extern void file_close(void);
 extern int file_save(void);
+extern uint64_t file_capacity;
+extern char file_path[512];
 
 extern int x11_init(const char *title, int w, int h);
 extern void x11_cleanup(void);
@@ -49,6 +53,8 @@ extern uint32_t visible_rows;
 extern uint32_t visible_bytes;
 extern void editor_update_geometry(void);
 extern void editor_ensure_visible(void);
+extern void editor_next_byte(void);
+extern void editor_move_down(void);
 extern uint32_t editor_get_visible_rows(void);
 extern uint32_t editor_get_visible_bytes(void);
 
@@ -798,8 +804,185 @@ int main() {
     remove(tab_f1);
     remove(tab_f2);
 
+    // =========================================================================
+    // Test 21: Blank File Creation (Running with no arguments)
+    // =========================================================================
+    printf("\n[TEST 21] Testing blank file creation (untitled.bin)...\n");
+    assert(file_create_blank() == 0);
+    assert(file_size == 0);
+    assert(file_capacity >= 65536);
+    assert(file_ptr != NULL);
+    assert(strcmp(file_path, "untitled.bin") == 0);
+    printf("  -> Blank file created: 0 bytes, capacity %lu bytes, path '%s'.\n", file_capacity, file_path);
+
+    // Write bytes in blank file using ASCII pane
+    editor_init();
+    active_pane = 1; // PANE_ASCII
+    char test_msg[] = "AsmHexPureAssembly";
+    for (int i = 0; i < (int)strlen(test_msg); i++) {
+        char c = test_msg[i];
+        editor_handle_key(0, &c, 1, 0);
+    }
+    assert(file_size == strlen(test_msg));
+    assert(memcmp(file_ptr, test_msg, file_size) == 0);
+    printf("  -> Wrote %lu bytes into blank buffer: '%s'.\n", file_size, test_msg);
+
+    // Save blank file to disk as untitled.bin
+    remove("untitled.bin");
+    assert(file_save() == 0);
+    printf("  -> Ctrl+S save executed successfully.\n");
+
+    // Verify file on disk
+    FILE *check_fp = fopen("untitled.bin", "rb");
+    assert(check_fp != NULL);
+    fseek(check_fp, 0, SEEK_END);
+    long sz_disk = ftell(check_fp);
+    assert(sz_disk == (long)strlen(test_msg));
+    fseek(check_fp, 0, SEEK_SET);
+    char disk_buf[32] = {0};
+    assert(fread(disk_buf, 1, sz_disk, check_fp) == (size_t)sz_disk);
+    assert(strcmp(disk_buf, test_msg) == 0);
+    fclose(check_fp);
+    remove("untitled.bin");
+    file_close();
+    printf("  -> Verified untitled.bin on disk matched bit-for-bit with written content.\n");
+
+    // =========================================================================
+    // Test 22: Appending Bytes past EOF (Dynamic File Resizing)
+    // =========================================================================
+    printf("\n[TEST 22] Testing appending bytes at EOF in Hex and ASCII panes...\n");
+    assert(file_create_blank() == 0);
+    editor_init();
+
+    // 1. Append in Hex pane: type '4' then '2' -> byte 0x42 ('B')
+    active_pane = 0; // PANE_HEX
+    cursor_offset = 0;
+    nibble_index = 0;
+    char k4 = '4';
+    editor_handle_key(0, &k4, 1, 0);
+    assert(file_size == 1);
+    assert(cursor_offset == 0 && nibble_index == 1);
+    assert(file_ptr[0] == 0x40);
+
+    char k2 = '2';
+    editor_handle_key(0, &k2, 1, 0);
+    assert(file_size == 1);
+    assert(cursor_offset == 1 && nibble_index == 0); // Cursor advanced to EOF
+    assert(file_ptr[0] == 0x42);
+    printf("  -> Appended byte 0x42 ('B') at EOF in Hex pane: file_size = %lu, cursor = %lu.\n", file_size, cursor_offset);
+
+    // Append second byte 'a' then 'f' -> byte 0xAF
+    char ka = 'a';
+    editor_handle_key(0, &ka, 1, 0);
+    assert(file_size == 2);
+    assert(cursor_offset == 1 && nibble_index == 1);
+    assert(file_ptr[1] == 0xa0);
+
+    char kf = 'f';
+    editor_handle_key(0, &kf, 1, 0);
+    assert(file_size == 2);
+    assert(cursor_offset == 2 && nibble_index == 0);
+    assert(file_ptr[1] == 0xaf);
+    printf("  -> Appended byte 0xAF at EOF in Hex pane: file_size = %lu, cursor = %lu.\n", file_size, cursor_offset);
+
+    // 2. Append in ASCII pane: switch to ASCII and type 'X', 'Y', 'Z'
+    active_pane = 1; // PANE_ASCII
+    char kx = 'X';
+    editor_handle_key(0, &kx, 1, 0);
+    assert(file_size == 3 && cursor_offset == 3);
+    assert(file_ptr[2] == 'X');
+
+    char ky = 'Y';
+    editor_handle_key(0, &ky, 1, 0);
+    assert(file_size == 4 && cursor_offset == 4);
+    assert(file_ptr[3] == 'Y');
+
+    char kz = 'Z';
+    editor_handle_key(0, &kz, 1, 0);
+    assert(file_size == 5 && cursor_offset == 5);
+    assert(file_ptr[4] == 'Z');
+    printf("  -> Appended 'XYZ' in ASCII pane: file_size = %lu, cursor = %lu.\n", file_size, cursor_offset);
+
+    // Verify navigation does not exceed EOF
+    editor_next_byte();
+    assert(cursor_offset == 5); // Clamped to EOF
+    editor_move_down();
+    assert(cursor_offset == 5); // Clamped to EOF
+    printf("  -> Verified cursor navigation clamps cleanly at EOF.\n");
+    file_close();
+
+    // =========================================================================
+    // Test 23: Copy-on-Write Memory Safety (Exit without Ctrl+S leaves disk intact)
+    // =========================================================================
+    printf("\n[TEST 23] Testing copy-on-write unsaved exit (no disk modification without Ctrl+S)...\n");
+    const char *cow_file = "/tmp/asmhex_cow_test.dat";
+    FILE *cow_fp = fopen(cow_file, "wb");
+    assert(cow_fp != NULL);
+    uint8_t orig_bytes[32];
+    memset(orig_bytes, 0x55, sizeof(orig_bytes));
+    fwrite(orig_bytes, 1, sizeof(orig_bytes), cow_fp);
+    fclose(cow_fp);
+
+    // Open file, modify memory bytes, and close without file_save()
+    assert(file_open(cow_file) == 0);
+    assert(file_size == 32);
+    file_ptr[0] = 0xAA;
+    file_ptr[15] = 0xBB;
+    file_ptr[31] = 0xCC;
+    assert(file_ptr[0] == 0xAA && file_ptr[15] == 0xBB && file_ptr[31] == 0xCC);
+
+    // Close application (simulates Ctrl+Q without saving)
+    file_close();
+
+    // Verify disk file is 100% UNTOUCHED
+    cow_fp = fopen(cow_file, "rb");
+    assert(cow_fp != NULL);
+    uint8_t disk_verify[32] = {0};
+    assert(fread(disk_verify, 1, 32, cow_fp) == 32);
+    fclose(cow_fp);
+    assert(memcmp(disk_verify, orig_bytes, 32) == 0);
+    remove(cow_file);
+    printf("  -> Verified disk file remained 100%% untouched after unsaved edits.\n");
+
+    // =========================================================================
+    // Test 24: Command-Line Diff Invocation & editor_init Protection
+    // =========================================================================
+    printf("\n[TEST 24] Testing Command-Line Diff Mode invocation (Method 1 & 2)...\n");
+    const char *diff_f1 = "/tmp/asmhex_cli_diff1.dat";
+    const char *diff_f2 = "/tmp/asmhex_cli_diff2.dat";
+    FILE *df1 = fopen(diff_f1, "wb");
+    FILE *df2 = fopen(diff_f2, "wb");
+    assert(df1 && df2);
+    uint8_t buf1[64], buf2[64];
+    memset(buf1, 0x10, 64);
+    memset(buf2, 0x10, 64);
+    buf2[5] = 0x99;
+    buf2[20] = 0x88;
+    fwrite(buf1, 1, 64, df1);
+    fwrite(buf2, 1, 64, df2);
+    fclose(df1);
+    fclose(df2);
+
+    // Method 1: ./asmhex file1 file2
+    editor_init();
+    assert(file_open(diff_f1) == 0);
+    assert(file2_open(diff_f2) == 0);
+    is_diff_mode = 1;
+    diff_recompute();
+
+    // Crucial check: verify calling editor_init() does not wipe is_diff_mode
+    editor_init();
+    assert(is_diff_mode == 1);
+    assert(diff_count == 2);
+    printf("  -> Verified editor_init() preserved is_diff_mode = 1 (Method 1 & 2 protected).\n");
+
+    file2_close();
+    file_close();
+    remove(diff_f1);
+    remove(diff_f2);
+
     printf("\n========================================================\n");
-    printf("  ALL 20 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 24 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

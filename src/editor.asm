@@ -18,6 +18,7 @@ extern is_readonly
 extern is_scratch
 extern file_path
 extern file_save
+extern file_ensure_capacity
 
 extern file2_ptr
 extern file2_size
@@ -53,7 +54,7 @@ extern hex_lut
 extern bin_lut
 
 section .data
-    title_str:         db " AsmHex v1.0 ", 0
+    title_str:         db " AsmHex v1.1 ", 0
     sub_title:         db "Pure x86_64 Assembly Hex Editor", 0
     tag_mod:           db " [MODIFIED] ", 0
     tag_ro:            db " [READ-ONLY] ", 0
@@ -61,6 +62,7 @@ section .data
 
     screenshot_file:   db "asmhex_screenshot.ppm", 0
     status_shot_saved: db "Screenshot saved to asmhex_screenshot.ppm!", 0
+    insp_eof_lbl:      db "[EOF / Append Mode]", 0
 
     col_hdr_offset:    db "Offset (h)", 0
     col_hdr_hex:       db "00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f", 0
@@ -344,12 +346,17 @@ editor_init:
     mov qword [rel last_checksum_off], 0
     mov qword [rel last_checksum_len], 0
     mov byte [rel last_sha256_hex], 0
+
+    ; Do NOT overwrite diff state if diff mode is already active
+    cmp dword [rel is_diff_mode], 1
+    je .skip_diff_init
     mov dword [rel is_diff_mode], 0
     mov dword [rel diff_active_file], 0
     mov qword [rel diff_count], 0
     mov dword [rel diff_list_count], 0
     mov dword [rel current_diff_idx], -1
     mov dword [rel diff_chip_count], 0
+.skip_diff_init:
 
     ; Set initial status message
     lea rdi, [rel status_ready]
@@ -495,9 +502,6 @@ global editor_next_byte
 editor_next_byte:
     mov rax, [rel cursor_offset]
     call editor_get_diff_max_size
-    test rdx, rdx
-    jz .next_b_done
-    dec rdx                           ; max index = max_size - 1
     cmp rax, rdx
     jae .next_b_done
     inc rax
@@ -545,13 +549,10 @@ editor_move_down:
     mov rax, [rel cursor_offset]
     add rax, 16
     call editor_get_diff_max_size
-    test rdx, rdx
-    jz .down_done
     cmp rax, rdx
-    jb .down_ok
-    ; clamp to last byte
+    jbe .down_ok
+    ; clamp to EOF (rdx)
     mov rax, rdx
-    dec rax
 .down_ok:
     mov [rel cursor_offset], rax
     call editor_ensure_visible
@@ -580,12 +581,9 @@ editor_page_down:
     mov edx, [rel visible_bytes]
     add rax, rdx
     call editor_get_diff_max_size
-    test rdx, rdx
-    jz .pgdn_done
     cmp rax, rdx
-    jb .pgdn_ok
+    jbe .pgdn_ok
     mov rax, rdx
-    dec rax
 .pgdn_ok:
     mov [rel cursor_offset], rax
     call editor_ensure_visible
@@ -608,12 +606,9 @@ editor_end:
     mov rax, [rel cursor_offset]
     or rax, 15
     call editor_get_diff_max_size
-    test rdx, rdx
-    jz .end_done
     cmp rax, rdx
-    jb .end_ok
+    jbe .end_ok
     mov rax, rdx
-    dec rax
 .end_ok:
     mov [rel cursor_offset], rax
     mov dword [rel nibble_index], 0
@@ -1610,9 +1605,6 @@ editor_handle_key:
 
 .ctrl_end:
     call editor_get_diff_max_size
-    test rdx, rdx
-    jz .key_done
-    dec rdx
     mov [rel cursor_offset], rdx
     mov dword [rel nibble_index], 0
     mov dword [rel has_selection], 0
@@ -1662,7 +1654,8 @@ editor_handle_key:
     mov r8, rax
     mov r9, [rel cursor_offset]
     cmp r9, rdx
-    jae .key_done
+    ja .key_done
+    je .append_hex_byte
 
     movzx eax, byte [r8 + r9]         ; current byte value
     mov r10d, eax                     ; old byte in r10d
@@ -1708,6 +1701,36 @@ editor_handle_key:
     call editor_next_byte
     jmp .key_done
 
+.append_hex_byte:
+    push rbx
+    push r8
+    push r9
+    mov rdi, r9
+    inc rdi                           ; needed_bytes = cursor_offset + 1
+    call file_ensure_capacity
+    pop r9
+    pop r8
+    pop rbx
+    test eax, eax
+    jnz .key_done
+
+    mov r8, [rel file_ptr]
+    shl ebx, 4                        ; high nibble
+    mov [r8 + r9], bl                 ; store high nibble (low nibble is 0)
+    mov rdi, r9
+    xor esi, esi                      ; old byte was 0
+    mov dl, bl
+    call editor_record_undo
+    inc qword [rel file_size]
+    mov dword [rel is_dirty], 1
+    mov dword [rel nibble_index], 1
+    cmp dword [rel is_diff_mode], 1
+    jne .hex_app_no_diff
+    call diff_recompute
+.hex_app_no_diff:
+    call editor_ensure_visible
+    jmp .key_done
+
     ; --------------------------------------------------------------------------
     ; ASCII Pane Editing (Printable characters 32..126)
     ; --------------------------------------------------------------------------
@@ -1727,7 +1750,8 @@ editor_handle_key:
     mov r8, rax
     mov r9, [rel cursor_offset]
     cmp r9, rdx
-    jae .key_done
+    ja .key_done
+    je .append_ascii_byte
 
     movzx r10d, byte [r8 + r9]        ; old byte
     mov [r8 + r9], bl                 ; write new character
@@ -1743,6 +1767,35 @@ editor_handle_key:
 
     ; Advance cursor
     call editor_move_right
+    jmp .key_done
+
+.append_ascii_byte:
+    push rbx
+    push r8
+    push r9
+    mov rdi, r9
+    inc rdi                           ; needed_bytes = cursor_offset + 1
+    call file_ensure_capacity
+    pop r9
+    pop r8
+    pop rbx
+    test eax, eax
+    jnz .key_done
+
+    mov r8, [rel file_ptr]
+    mov [r8 + r9], bl                 ; write new character
+    mov rdi, r9
+    xor esi, esi                      ; old byte was 0
+    mov dl, bl
+    call editor_record_undo
+    inc qword [rel file_size]
+    mov dword [rel is_dirty], 1
+    cmp dword [rel is_diff_mode], 1
+    jne .asc_app_no_diff
+    call diff_recompute
+.asc_app_no_diff:
+    call editor_next_byte             ; advance cursor to new EOF
+    jmp .key_done
 
 .key_done:
     xor eax, eax                      ; 0 = keep running
@@ -1947,7 +2000,7 @@ editor_handle_click:
     add rdx, rbx
     add rdx, rax
     cmp rdx, [rel file_size]
-    jae .click_done
+    ja .click_done
 
     mov [rel cursor_offset], rdx
     mov dword [rel active_pane], PANE_HEX
@@ -1976,7 +2029,7 @@ editor_handle_click:
     add rdx, rbx
     add rdx, rax
     cmp rdx, [rel file_size]
-    jae .click_done
+    ja .click_done
 
     mov [rel cursor_offset], rdx
     mov dword [rel active_pane], PANE_ASCII
@@ -4372,7 +4425,16 @@ editor_render:
 
     call editor_get_diff_max_size
     cmp r13, rdx
-    jae .rows_done
+    jb .draw_this_row
+
+    ; Even if row_offset >= max_size, draw row if cursor is on it
+    mov rax, [rel cursor_offset]
+    and rax, -16
+    cmp r13, rax
+    je .draw_this_row
+    jmp .rows_done
+
+.draw_this_row:
 
     ; row_y = SEPARATOR_Y + 6 + r12 * 16
     mov r14d, r12d
@@ -4415,7 +4477,12 @@ editor_render:
 
     call editor_get_diff_max_size
     cmp rbx, rdx
-    jae .row_bytes_done
+    jb .chk_b_diff
+    cmp rbx, [rel cursor_offset]
+    je .chk_b_diff
+    jmp .row_bytes_done
+
+.chk_b_diff:
 
     ; Check if byte is mismatch in diff mode
     xor r8d, r8d                      ; r8d = is_diff (0 or 1)
@@ -4818,7 +4885,7 @@ editor_render:
     ; Check if cursor_offset is within file
     mov rbx, [rel cursor_offset]
     cmp rbx, [rel file_size]
-    jae .render_status_bar
+    jae .render_eof_inspector
 
     ; Inspector Offset (Hex)
     lea rdi, [rel insp_off_h]
@@ -5046,6 +5113,61 @@ editor_render:
     mov esi, INSPECTOR_X + 120
     mov edx, 242
     mov ecx, COLOR_INSP_VAL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+    jmp .skip_32
+
+.render_eof_inspector:
+    ; Inspector Offset (Hex)
+    lea rdi, [rel insp_off_h]
+    mov esi, INSPECTOR_X
+    mov edx, 56
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    lea rdi, [rel str_buf_1]
+    mov rsi, [rel cursor_offset]
+    call format_hex_qword
+
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 136
+    mov edx, 56
+    mov ecx, COLOR_INSP_VAL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Inspector Offset (Dec)
+    lea rdi, [rel insp_off_d]
+    mov esi, INSPECTOR_X
+    mov edx, 74
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    lea rdi, [rel str_buf_1]
+    mov rsi, [rel cursor_offset]
+    call format_dec_qword
+
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 120
+    mov edx, 74
+    mov ecx, COLOR_INSP_VAL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Value (Hex): [EOF / Append Mode]
+    lea rdi, [rel insp_val_h]
+    mov esi, INSPECTOR_X
+    mov edx, 92
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    lea rdi, [rel insp_eof_lbl]
+    mov esi, INSPECTOR_X + 120
+    mov edx, 92
+    mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
 

@@ -62,11 +62,12 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
    - Drag any file from modern file managers (GNOME Files, Dolphin, Thunar, PCManFM) onto the window to open and inspect it immediately.
    - Built-in URI percent-decoding handles spaces (`%20`), special characters, and `file://` / `localhost` prefixes in pure assembly.
 
-9. **Instantaneous 64-bit Memory-Mapped I/O**:
-   - Uses direct Linux `sys_mmap` (syscall 9) and `sys_msync` (syscall 26).
-   - Files of arbitrary size (from 1 byte to hundreds of gigabytes) open instantaneously with zero preloading lag.
+9. **Safe Copy-on-Write Memory Architecture & Clean Blank Files**:
+   - **Zero Disk Mutation on Exit**: Edits are stored purely in private RAM buffers. Closing or quitting (`Ctrl+Q` or `Esc`) without saving leaves disk files 100% untouched.
+   - **Explicit `Ctrl+S` Saving**: Commits modifications to disk via `SYS_write`, `SYS_ftruncate`, and `SYS_fsync` to guarantee data integrity.
+   - **Blank File Creation**: Running `asmhex` without arguments opens `untitled.bin` (0 bytes, 64 KB capacity) ready for immediate binary writing.
+   - **Dynamic EOF Appending**: Typing in Hex or ASCII pane at or past EOF automatically reallocates capacity (`SYS_mremap`) and expands `file_size` on the fly.
    - Read-only protection detection: gracefully opens write-protected files in `[READ-ONLY]` mode.
-   - Interactive 4KB scratch buffer automatically created when launched without arguments.
 
 10. **Live Data Inspector**:
    - Real-time side inspector panel decodes the byte(s) at current cursor offset into:
@@ -181,23 +182,26 @@ make
 
 ### Run
 ```bash
-# Open interactive scratch buffer
+# Open blank file ready for writing (untitled.bin)
 ./asmhex
 
 # Open and view/edit an existing file (e.g. ELF executable, ROM, raw image)
 ./asmhex /path/to/binary_file
 
-# Compare / Diff two binary files side-by-side
+# Compare / Diff two binary files side-by-side (Method 1)
 ./asmhex file1.bin file2.bin
-# or explicitly:
+
+# Explicit Diff Mode invocation (Method 2)
 ./asmhex --diff file1.bin file2.bin
+# or short flag:
+./asmhex -d file1.bin file2.bin
 
 # Headless screenshot generation
 ./asmhex --screenshot output.ppm /path/to/binary_file
 ./asmhex --screenshot diff_output.ppm file1.bin file2.bin
 ```
 
-### Run Automated Tests (18 Tests)
+### Run Automated Tests (24 Core Functionality Tests)
 ```bash
 make test
 ```

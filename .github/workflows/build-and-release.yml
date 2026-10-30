@@ -29,7 +29,7 @@ jobs:
       - name: Compile AsmHex Binary
         run: make clean && make
 
-      - name: Run 20-Point Automated Test Suite
+      - name: Run 24-Point Automated Test Suite
         run: xvfb-run --auto-servernum make test
 
       - name: Run Live Resizing Verification

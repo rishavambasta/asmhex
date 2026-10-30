@@ -36,6 +36,7 @@ extern x11_convert_xdnd_drop
 extern x11_get_drop_file_path
 
 extern file_open
+extern file_create_blank
 extern file_create_scratch
 extern file_close
 extern file_path
@@ -63,16 +64,16 @@ extern editor_handle_wheel
 extern editor_set_status
 
 section .data
-    app_title:     db "AsmHex v1.0 - Pure x86_64 Assembly Hex Editor", 0
+    app_title:     db "AsmHex v1.1.0 - Pure x86_64 Assembly Hex Editor", 0
     err_disp_msg:  db "Error: Failed to connect to X11 display (check DISPLAY env var).", 0
-    err_file_msg:  db "Notice: Could not open file; loaded interactive scratch buffer.", 0
+    err_file_msg:  db "Notice: Could not open file; loaded blank buffer for writing.", 0
     arg_screenshot: db "--screenshot", 0
     arg_diff:       db "--diff", 0
     arg_diff_short: db "-d", 0
     diff_banner:    db "[AsmHex] Diff Mode active: Comparing 2 files.", 10, 0
     banner_console:
         db "================================================================", 10
-        db "  AsmHex v1.0 - Graphical Hex Editor in Pure x86_64 Assembly    ", 10
+        db "  AsmHex v1.1.0 - Graphical Hex Editor in Pure x86_64 Assembly  ", 10
         db "  Hardware: Intel Celeron UHD GPU / SSE4.2 Accelerated          ", 10
         db "================================================================", 10, 0
 
@@ -109,6 +110,11 @@ main:
     mov dword [rel is_auto_shot], 0
     mov qword [rel auto_shot_path], 0
 
+    ; Initialize Fast Rendering Lookup Tables, CRC32 Table, & Editor State BEFORE file processing
+    call init_renderer_luts
+    call init_crc32_table
+    call editor_init
+
     ; 1. Initialize File I/O
     cmp r12d, 2
     jl .no_file_arg
@@ -128,6 +134,23 @@ main:
     mov dword [rel is_auto_shot], 1
 
     ; Check if target file arguments are provided at argv[3] (and argv[4] for diff)
+    cmp r12d, 6
+    jl .check_shot_two_files
+
+    ; Check if argv[3] is "--diff" or "-d"
+    mov rdi, [r13 + 24]               ; argv[3]
+    lea rsi, [rel arg_diff]
+    call strcmp wrt ..plt
+    test eax, eax
+    jz .shot_diff_explicit
+
+    mov rdi, [r13 + 24]               ; argv[3]
+    lea rsi, [rel arg_diff_short]
+    call strcmp wrt ..plt
+    test eax, eax
+    jz .shot_diff_explicit
+
+.check_shot_two_files:
     cmp r12d, 5
     jl .shot_one_file
     mov rdi, [r13 + 24]               ; argv[3]
@@ -142,6 +165,19 @@ main:
     call diff_recompute
     jmp .file_ready
 
+.shot_diff_explicit:
+    mov rdi, [r13 + 32]               ; argv[4]
+    call file_open
+    test eax, eax
+    jnz .shot_one_file
+    mov rdi, [r13 + 40]               ; argv[5]
+    call file2_open
+    test eax, eax
+    jnz .file_ready
+    mov dword [rel is_diff_mode], 1
+    call diff_recompute
+    jmp .file_ready
+
 .shot_one_file:
     cmp r12d, 4
     jl .no_file_arg
@@ -149,7 +185,7 @@ main:
     call file_open
     test eax, eax
     jz .file_ready
-    call file_create_scratch
+    call file_create_blank
     jmp .file_ready
 
 .normal_file_arg:
@@ -177,10 +213,10 @@ main:
     test eax, eax
     jz .file_ready
 
-    ; File open failed: create scratch buffer and notify user
+    ; File open failed: create blank buffer and notify user
     lea rdi, [rel err_file_msg]
     call puts wrt ..plt
-    call file_create_scratch
+    call file_create_blank
     jmp .file_ready
 
 .diff_mode_explicit:
@@ -218,16 +254,9 @@ main:
     jmp .file_ready
 
 .no_file_arg:
-    call file_create_scratch
+    call file_create_blank
 
 .file_ready:
-    ; 2. Initialize Fast Rendering Lookup Tables & CRC32 Lookup Table
-    call init_renderer_luts
-    call init_crc32_table
-
-    ; 3. Initialize Editor State (cursor, undo stack, colors)
-    call editor_init
-
     ; 4. Initialize X11 Display & Zero-Copy MIT-SHM Backbuffer
     lea rdi, [rel app_title]
     mov esi, WIN_DEFAULT_W
