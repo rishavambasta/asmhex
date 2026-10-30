@@ -1,0 +1,15 @@
+# Build artifacts
+build/
+asmhex
+*.o
+*.a
+*.so
+
+# Image and screenshot dumps
+*.ppm
+*.png
+
+# Temporary test data
+/tmp/*
+asmhex_screenshot.ppm
+selection_demo.ppm
