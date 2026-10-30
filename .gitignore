@@ -13,3 +13,5 @@ asmhex
 /tmp/*
 asmhex_screenshot.ppm
 selection_demo.ppm
+tests/test_suite
+tests/test_benchmark
