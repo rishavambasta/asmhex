@@ -66,6 +66,21 @@ extern char last_sha256_hex[68];
 extern uint64_t last_checksum_off;
 extern uint64_t last_checksum_len;
 
+extern int file2_open(const char *path);
+extern void file2_close(void);
+extern uint8_t *file2_ptr;
+extern uint64_t file2_size;
+extern uint32_t is_diff_mode;
+extern uint32_t diff_active_file;
+extern uint64_t diff_count;
+extern void diff_recompute(void);
+extern void editor_diff_next(void);
+extern void editor_diff_prev(void);
+extern void editor_diff_flip(void);
+extern void format_hex_qword(char *dst, uint64_t val);
+extern void format_hex_dword(char *dst, uint32_t val);
+extern uint16_t hex_lut[256];
+
 int main() {
     printf("========================================================\n");
     printf("  Running AsmHex Comprehensive Test Suite...\n");
@@ -432,8 +447,168 @@ int main() {
 
     file_close();
 
+    // -------------------------------------------------------------------------
+    // TEST 16: Keyboard Range Selection (Shift + Arrows, Ctrl + A, Escape)
+    // -------------------------------------------------------------------------
+    printf("\nTest 16: Keyboard Range Selection Engine...\n");
+    file_create_scratch();
+    editor_init();
+    assert(has_selection == 0);
+    assert(cursor_offset == 0);
+
+    // Shift + Right (state & 1 == ShiftMask)
+    editor_handle_key(XK_Right, NULL, 0, 1);
+    assert(cursor_offset == 1);
+    assert(has_selection == 1);
+    assert(sel_start == 0);
+    assert(sel_end == 1);
+    printf("  -> Shift+Right anchored selection at 0 and advanced to offset 1.\n");
+
+    // Shift + Down: should advance cursor by 16 bytes (to offset 17)
+    editor_handle_key(XK_Down, NULL, 0, 1);
+    assert(cursor_offset == 17);
+    assert(has_selection == 1);
+    assert(sel_start == 0);
+    assert(sel_end == 17);
+    printf("  -> Shift+Down expanded selection to offset 17 (18 bytes total).\n");
+
+    // Shift + Left: shrink back by 1 byte (to offset 16)
+    editor_handle_key(XK_Left, NULL, 0, 1);
+    assert(cursor_offset == 16);
+    assert(has_selection == 1);
+    assert(sel_start == 0);
+    assert(sel_end == 16);
+    printf("  -> Shift+Left shrunk selection to offset 16.\n");
+
+    // Arrow key WITHOUT Shift: clears active selection
+    editor_handle_key(XK_Right, NULL, 0, 0);
+    assert(has_selection == 0);
+    printf("  -> Plain arrow key (no Shift) cleanly cleared selection.\n");
+
+    // Ctrl + A: Select All (state & 4 == ControlMask)
+    editor_handle_key('a', NULL, 0, 4);
+    assert(has_selection == 1);
+    assert(sel_start == 0);
+    assert(sel_end == file_size - 1);
+    assert(cursor_offset == file_size - 1);
+    printf("  -> Ctrl+A selected entire file: range 0x%lx..0x%lx (%lu bytes).\n",
+           sel_start, sel_end, file_size);
+
+    // Escape clears selection
+    editor_handle_key(XK_Escape, NULL, 0, 0);
+    assert(has_selection == 0);
+    printf("  -> Escape key cleared selection.\n");
+
+    file_close();
+
+    // -------------------------------------------------------------------------
+    // TEST 17: Multi-File Comparison & Diff Engine (F2, F7, F8)
+    // -------------------------------------------------------------------------
+    printf("\nTest 17: Multi-File Comparison & Diff Engine...\n");
+    const char *tmp1 = "/tmp/asmhex_diff1.dat";
+    const char *tmp2 = "/tmp/asmhex_diff2.dat";
+
+    // Write file 1: 128 bytes with all 0xAA
+    FILE *f1 = fopen(tmp1, "wb");
+    assert(f1 != NULL);
+    uint8_t b1[128];
+    memset(b1, 0xAA, 128);
+    fwrite(b1, 1, 128, f1);
+    fclose(f1);
+
+    // Write file 2: 144 bytes with all 0xAA except offset 10 (0xBB), offset 42 (0xCC), and 16 extra bytes at end (0xDD)
+    FILE *f2 = fopen(tmp2, "wb");
+    assert(f2 != NULL);
+    uint8_t b2[144];
+    memset(b2, 0xAA, 144);
+    b2[10] = 0xBB;
+    b2[42] = 0xCC;
+    memset(b2 + 128, 0xDD, 16);
+    fwrite(b2, 1, 144, f2);
+    fclose(f2);
+
+    // Open file 1 and file 2
+    assert(file_open(tmp1) == 0);
+    assert(file2_open(tmp2) == 0);
+    editor_init();
+
+    // Enable Diff Mode and recompute
+    is_diff_mode = 1;
+    diff_recompute();
+
+    // Expected differences: offset 10 (1), offset 42 (1), plus 16 bytes tail mismatch = 18 diffs
+    assert(diff_count == 18);
+    printf("  -> diff_recompute detected exact difference count: %lu mismatches.\n", diff_count);
+
+    // Test editor_diff_next: starting from 0, next diff should be offset 10
+    cursor_offset = 0;
+    editor_diff_next();
+    assert(cursor_offset == 10);
+    printf("  -> editor_diff_next jumped directly to first difference at offset 10.\n");
+
+    // Next diff should be offset 42
+    editor_diff_next();
+    assert(cursor_offset == 42);
+    printf("  -> editor_diff_next jumped directly to second difference at offset 42.\n");
+
+    // Next diff should jump to offset 128 (EOF tail of file 1 vs file 2)
+    editor_diff_next();
+    assert(cursor_offset == 128);
+    printf("  -> editor_diff_next jumped to file length mismatch at offset 128.\n");
+
+    // Test editor_diff_prev: backward navigation to offset 42
+    editor_diff_prev();
+    assert(cursor_offset == 42);
+    printf("  -> editor_diff_prev jumped backward to offset 42.\n");
+
+    // editor_diff_prev to offset 10
+    editor_diff_prev();
+    assert(cursor_offset == 10);
+    printf("  -> editor_diff_prev jumped backward to offset 10.\n");
+
+    // Test editor_diff_flip (F2)
+    assert(diff_active_file == 0);
+    editor_diff_flip();
+    assert(diff_active_file == 1);
+    printf("  -> editor_diff_flip switched active display to File 2.\n");
+    editor_diff_flip();
+    assert(diff_active_file == 0);
+    printf("  -> editor_diff_flip switched active display back to File 1.\n");
+
+    // Clean up
+    file2_close();
+    file_close();
+    remove(tmp1);
+    remove(tmp2);
+
+    // -------------------------------------------------------------------------
+    // TEST 18: Lowercase Hex Digits Verification
+    // -------------------------------------------------------------------------
+    printf("\nTest 18: Lowercase Hexadecimal Display Formatting...\n");
+    char hex_q[17];
+    format_hex_qword(hex_q, 0x0123456789abcdefULL);
+    assert(strcmp(hex_q, "0123456789abcdef") == 0);
+    printf("  -> format_hex_qword produced pure lowercase hex: '%s'.\n", hex_q);
+
+    char hex_d[9];
+    format_hex_dword(hex_d, 0xdeadbeef);
+    assert(strcmp(hex_d, "deadbeef") == 0);
+    printf("  -> format_hex_dword produced pure lowercase hex: '%s'.\n", hex_d);
+
+    // Verify hex_lut contains lowercase ascii digits '0'..'9', 'a'..'f'
+    // Byte 0x0A => "0a" (ASCII '0' = 0x30, 'a' = 0x61)
+    uint16_t lut_0a = hex_lut[0x0a];
+    char ch0 = (char)(lut_0a & 0xFF);
+    char ch1 = (char)((lut_0a >> 8) & 0xFF);
+    assert(ch0 == '0' && ch1 == 'a');
+
+    // Byte 0xFE => "fe"
+    uint16_t lut_fe = hex_lut[0xfe];
+    assert((char)(lut_fe & 0xFF) == 'f' && (char)((lut_fe >> 8) & 0xFF) == 'e');
+    printf("  -> hex_lut verified with lowercase byte representations ('0a', 'fe').\n");
+
     printf("\n========================================================\n");
-    printf("  ALL 15 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 18 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

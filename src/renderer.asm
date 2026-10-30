@@ -38,10 +38,10 @@ init_renderer_luts:
     push rbx
     push r12
 
-    lea rsi, [rel hex_chars]
+    lea rsi, [rel hex_chars_l]
     lea rdi, [rel hex_lut]
 
-    ; Initialize hex_lut (2 uppercase hex ASCII characters for each byte 0..255)
+    ; Initialize hex_lut (2 lowercase hex ASCII characters for each byte 0..255)
     xor ecx, ecx                      ; ecx = byte value 0..255
 .loop_hex:
     mov eax, ecx
@@ -664,7 +664,7 @@ draw_vline:
 ; ------------------------------------------------------------------------------
 global format_hex_qword
 format_hex_qword:
-    lea r8, [rel hex_chars]
+    lea r8, [rel hex_chars_l]
     mov rax, rsi
     mov rcx, 16                       ; 16 nibbles
 .q_loop:
@@ -681,12 +681,12 @@ format_hex_qword:
 
 ; ------------------------------------------------------------------------------
 ; format_hex_dword:
-; Converts 32-bit value to 8 hex uppercase ASCII digits at [rdi]
+; Converts 32-bit value to 8 hex lowercase ASCII digits at [rdi]
 ; rdi = dst (>= 9 bytes), esi = 32-bit value
 ; ------------------------------------------------------------------------------
 global format_hex_dword
 format_hex_dword:
-    lea r8, [rel hex_chars]
+    lea r8, [rel hex_chars_l]
     mov eax, esi
     mov ecx, 8
 .d_loop:

@@ -39,6 +39,14 @@ extern file_create_scratch
 extern file_close
 extern file_path
 extern file_size
+extern is_scratch
+
+extern file2_open
+extern file2_close
+extern file2_path
+extern file2_size
+extern is_diff_mode
+extern diff_recompute
 
 extern init_crc32_table
 extern init_renderer_luts
@@ -56,6 +64,9 @@ section .data
     err_disp_msg:  db "Error: Failed to connect to X11 display (check DISPLAY env var).", 0
     err_file_msg:  db "Notice: Could not open file; loaded interactive scratch buffer.", 0
     arg_screenshot: db "--screenshot", 0
+    arg_diff:       db "--diff", 0
+    arg_diff_short: db "-d", 0
+    diff_banner:    db "[AsmHex] Diff Mode active: Comparing 2 files.", 10, 0
     banner_console:
         db "================================================================", 10
         db "  AsmHex v1.0 - Graphical Hex Editor in Pure x86_64 Assembly    ", 10
@@ -113,7 +124,22 @@ main:
     mov [rel auto_shot_path], rax
     mov dword [rel is_auto_shot], 1
 
-    ; Check if target file argument is also provided at argv[3]
+    ; Check if target file arguments are provided at argv[3] (and argv[4] for diff)
+    cmp r12d, 5
+    jl .shot_one_file
+    mov rdi, [r13 + 24]               ; argv[3]
+    call file_open
+    test eax, eax
+    jnz .shot_one_file
+    mov rdi, [r13 + 32]               ; argv[4]
+    call file2_open
+    test eax, eax
+    jnz .file_ready
+    mov dword [rel is_diff_mode], 1
+    call diff_recompute
+    jmp .file_ready
+
+.shot_one_file:
     cmp r12d, 4
     jl .no_file_arg
     mov rdi, [r13 + 24]               ; argv[3]
@@ -124,6 +150,25 @@ main:
     jmp .file_ready
 
 .normal_file_arg:
+    ; Check if argv[1] is "--diff"
+    mov rdi, [r13 + 8]
+    lea rsi, [rel arg_diff]
+    call strcmp wrt ..plt
+    test eax, eax
+    jz .diff_mode_explicit
+
+    ; Check if argv[1] is "-d"
+    mov rdi, [r13 + 8]
+    lea rsi, [rel arg_diff_short]
+    call strcmp wrt ..plt
+    test eax, eax
+    jz .diff_mode_explicit
+
+    ; Check if 2 files were provided without flag: ./asmhex file1 file2
+    cmp r12d, 3
+    jge .check_two_files
+
+.single_file_open:
     mov rdi, [r13 + 8]                ; argv[1]
     call file_open
     test eax, eax
@@ -133,6 +178,40 @@ main:
     lea rdi, [rel err_file_msg]
     call puts wrt ..plt
     call file_create_scratch
+    jmp .file_ready
+
+.diff_mode_explicit:
+    cmp r12d, 4
+    jl .no_file_arg
+    mov rdi, [r13 + 16]               ; argv[2]
+    call file_open
+    test eax, eax
+    jnz .single_file_open
+    mov rdi, [r13 + 24]               ; argv[3]
+    call file2_open
+    test eax, eax
+    jnz .file_ready
+    mov dword [rel is_diff_mode], 1
+    call diff_recompute
+    lea rdi, [rel diff_banner]
+    xor eax, eax
+    call printf wrt ..plt
+    jmp .file_ready
+
+.check_two_files:
+    mov rdi, [r13 + 8]                ; argv[1]
+    call file_open
+    test eax, eax
+    jnz .single_file_open
+    mov rdi, [r13 + 16]               ; argv[2]
+    call file2_open
+    test eax, eax
+    jnz .file_ready
+    mov dword [rel is_diff_mode], 1
+    call diff_recompute
+    lea rdi, [rel diff_banner]
+    xor eax, eax
+    call printf wrt ..plt
     jmp .file_ready
 
 .no_file_arg:
@@ -355,7 +434,25 @@ main:
     mov rdx, [rel xdnd_action_copy_atom]
     call x11_send_xdnd_finished
 
-    ; Open dropped file and reload editor
+    ; If a file is already loaded and not scratch buffer, enter Diff Mode!
+    cmp dword [rel is_scratch], 0
+    jne .drop_replace_file
+
+    ; Open dropped file as file 2 for comparison
+    lea rdi, [rel drop_path_buf]
+    call file2_open
+    test eax, eax
+    jnz .drop_replace_file
+
+    mov dword [rel is_diff_mode], 1
+    call diff_recompute
+    call editor_render
+    call x11_flush
+    jmp .event_loop
+
+.drop_replace_file:
+    call file2_close
+    mov dword [rel is_diff_mode], 0
     call file_close
     lea rdi, [rel drop_path_buf]
     call file_open
@@ -391,6 +488,7 @@ main:
     ; Clean Application Shutdown
     ; ==========================================================================
 .exit_loop:
+    call file2_close
     call file_close
     call x11_cleanup
 
@@ -405,6 +503,7 @@ main:
 .disp_error:
     lea rdi, [rel err_disp_msg]
     call puts wrt ..plt
+    call file2_close
     call file_close
     mov eax, 1
     add rsp, 8

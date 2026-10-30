@@ -24,48 +24,66 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
    - L1-cache resident 2-cycle **Hex Lookup Table** (converts any byte to 2 ASCII hex characters in 2 CPU cycles without `sprintf`).
    - 64-bit **Binary Lookup Table** (`bin_lut`) converts any 8-bit byte into 8 ASCII binary characters (`01001000`) in a single 64-bit load.
 
-4. **Visual Scrollbar & Interactive Mouse Drag Selection**:
+4. **Visual Scrollbar, Multi-Row Selection & Keyboard Arrow Selection**:
    - **Proportional Scrollbar**: Sleek vertical scrollbar with dynamically computed proportional thumb (`th_h = (track_h * vis_bytes) / file_size`). Clicking track pages up/down; dragging the thumb smoothly scrolls across gigabyte-scale files.
+   - **Keyboard Text/Range Selection**: Hold **`Shift` + Arrow Keys** (`Left`, `Right`, `Up`, `Down`), `Page Up`, `Page Down`, `Home`, `End` to select arbitrary byte ranges using the keyboard. `Ctrl + A` selects the entire file; `Esc` clears active selection.
    - **Multi-Row Drag Selection**: Click and drag across the Hex or ASCII pane to select arbitrary byte ranges across columns and rows, with automatic edge scrolling.
    - **Bright Translucent Polygon**: Selected ranges are enclosed in a custom alpha-blended **translucent luminous polygon** (`0x0089B4FA` @ 38% opacity) bounded by a bright cyan enclosing perimeter border (`0x0089DCEB`). Text within the selection is blitted transparently in pure white (`COLOR_SEL_TEXT = #FFFFFF`).
    - **Live Selection Inspector**: Inspector dynamically displays selection start offset, end offset, total byte length in decimal and hex (`Length: 37 B (0x0025)`).
 
-5. **Drag-and-Drop File Opening (XDnD Protocol)**:
+5. **Multi-File Comparison & Binary Diff Engine**:
+   - **Dual-File Loading**: Compare two files side-by-side using `./asmhex file1 file2` or `./asmhex --diff file1 file2`.
+   - **XDnD Drag-and-Drop Diffing**: Dragging a second file into an already open file window immediately enables **Diff Mode**.
+   - **Visual Diff Highlighting**: Mismatching bytes between File 1 and File 2 are highlighted with a dark wine background (`COLOR_DIFF_BG = #451525`) and bright coral red foreground (`COLOR_DIFF_FG = #F38BA8`) across both Hex and ASCII panes.
+   - **File Flipping (`F2`)**: Toggle active view between File 1 and File 2 with instant visual synchronization at the identical byte offset.
+   - **Diff Navigation (`F7` / `F8`)**: Jump directly to the previous (`F7`) or next (`F8`) differing byte, with automatic page scrolling and wrap-around.
+   - **Live Diff Inspector**: Shows total mismatch count (`Diffs: N`), active file badge (`Active: File 1/2`), File 1 vs File 2 values at cursor (`File 1: 0xaa ('*') <=> File 2: 0xbb ('+')`), and match status (`IDENTICAL [==]` or `MISMATCH [!=]`).
+
+6. **Lowercase Hexadecimal Formatting**:
+   - All hexadecimal values throughout the application are rendered in elegant lowercase (`0123456789abcdef`):
+     - Hex data grid bytes (`00..ff`)
+     - Column headers (`00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f`)
+     - 64-bit row offsets (`0000000000000000..ffffffffffffffff`)
+     - Data inspector values, integers, selection ranges, and cryptographic checksums (CRC-32 & SHA-256)
+
+7. **Drag-and-Drop File Opening (XDnD Protocol)**:
    - Built-in support for the X Direct Save / Drag-and-Drop (XDnD version 5) protocol.
    - Drag any file from modern file managers (GNOME Files, Dolphin, Thunar, PCManFM) onto the window to open and inspect it immediately.
    - Built-in URI percent-decoding handles spaces (`%20`), special characters, and `file://` / `localhost` prefixes in pure assembly.
 
-6. **Instantaneous 64-bit Memory-Mapped I/O**:
+8. **Instantaneous 64-bit Memory-Mapped I/O**:
    - Uses direct Linux `sys_mmap` (syscall 9) and `sys_msync` (syscall 26).
    - Files of arbitrary size (from 1 byte to hundreds of gigabytes) open instantaneously with zero preloading lag.
    - Read-only protection detection: gracefully opens write-protected files in `[READ-ONLY]` mode.
    - Interactive 4KB scratch buffer automatically created when launched without arguments.
 
-5. **Live Data Inspector**:
+9. **Live Data Inspector**:
    - Real-time side inspector panel decodes the byte(s) at current cursor offset into:
      - **Offset**: 64-bit Hex & Decimal
      - **Values**: Hex, 8-bit Binary, ASCII char
      - **Integers (Little-Endian)**: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `uint64`
      - **File Statistics**: File size (human readable), cursor percentage, mode
 
-6. **Selection Cryptographic Checksums (CRC-32 & SHA-256)**:
-   - Pure assembly implementations of standard **IEEE 802.3 CRC-32** and **FIPS 180-4 SHA-256**.
-   - Press **`F12`** on any highlighted range to instantaneously compute both checksums.
-   - Displayed simultaneously in the bottom status line (`CRC32: 0xXXXXXXXX | SHA256: <64-hex>`), inside the side Inspector panel, and logged cleanly to stdout.
-   - If no selection is active, `F12` falls back to calculating checksums across the entire file.
+10. **Selection Cryptographic Checksums (CRC-32 & SHA-256)**:
+    - Pure assembly implementations of standard **IEEE 802.3 CRC-32** and **FIPS 180-4 SHA-256**.
+    - Press **`F12`** on any highlighted range to instantaneously compute both checksums.
+    - Displayed simultaneously in the bottom status line (`CRC32: 0xXXXXXXXX | SHA256: <64-hex>`), inside the side Inspector panel, and logged cleanly to stdout.
+    - If no selection is active, `F12` falls back to calculating checksums across the entire file.
 
-7. **Interactive Editing & Multi-Level Undo**:
-   - Dual-pane editing: switch effortlessly between **HEX** and **ASCII** panes with `Tab` or `Space`.
-   - In-place nibble editing (upper nibble followed by lower nibble, with automatic advance).
-   - Multi-level **Undo Stack (`Ctrl+Z`)** (up to 4,096 modification levels).
-   - **Modified Byte Highlighting**: every edited byte glows in vivid Coral Red (`#F38BA8`).
-   - `Ctrl+S` commits modifications directly to disk via `msync`.
+11. **Interactive Editing & Multi-Level Undo**:
+    - Dual-pane editing: switch effortlessly between **HEX** and **ASCII** panes with `Tab` or `Space`.
+    - In-place nibble editing (upper nibble followed by lower nibble, with automatic advance).
+    - Multi-level **Undo Stack (`Ctrl+Z`)** (up to 4,096 modification levels).
+    - **Modified Byte Highlighting**: every edited byte glows in vivid Coral Red (`#F38BA8`).
+    - `Ctrl+S` commits modifications directly to disk via `msync`.
+    - In Diff Mode, byte edits immediately recompute the diff count in real time!
 
-8. **Modal Command Navigation**:
-   - **Goto Offset (`Ctrl+G`)**: Instant jump to any hex (`0x...`) or decimal file offset.
-   - **Find Pattern (`Ctrl+F` / `F3`)**: Sub-millisecond forward and wrapped search for ASCII strings or byte sequences.
-   - **Range Checksums (`F12`)**: Immediate CRC-32 & SHA-256 hash calculation over active selection.
-   - **Instant Screenshot (`F11`)**: Saves lossless 24-bit PPM screenshots directly from framebuffer.
+12. **Modal Command Navigation**:
+    - **Goto Offset (`Ctrl+G`)**: Instant jump to any hex (`0x...`) or decimal file offset.
+    - **Find Pattern (`Ctrl+F` / `F3`)**: Sub-millisecond forward and wrapped search for ASCII strings or byte sequences.
+    - **Diff Navigation (`F7` / `F8`)**: Step through file differences forward and backward.
+    - **Range Checksums (`F12`)**: Immediate CRC-32 & SHA-256 hash calculation over active selection.
+    - **Instant Screenshot (`F11`)**: Saves lossless 24-bit PPM screenshots directly from framebuffer.
 
 ---
 
@@ -74,16 +92,22 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
 | Shortcut | Description |
 |---|---|
 | `Arrow Keys` | Move cursor left / right / up / down |
+| `Shift + Arrow Keys` | **Select text/range** using keyboard (anchors and extends selection polygon) |
+| `Shift + PgUp / PgDn` | Extend selection upward / downward by screenful (576 bytes) |
+| `Shift + Home / End` | Extend selection to beginning / end of current row |
+| `Ctrl + A` | **Select All** bytes in active file |
 | `Page Up` / `Page Down` | Scroll by screenful (576 bytes per page) |
 | `Home` / `End` | Jump to beginning / end of current row |
 | `Ctrl+Home` / `Ctrl+End` | Jump to start (`0x0`) or end of file |
+| `F2` | **Flip active display file** in Diff Mode (`File 1 <-> File 2`) |
+| `F7` / `F8` | **Jump to Previous / Next Difference** between files |
 | `Mouse Left Click` | Position cursor on any byte in Hex or ASCII pane |
 | `Mouse Drag Selection` | Drag across Hex or ASCII pane to enclose bytes in bright translucent polygon |
 | `Scrollbar Click / Drag` | Click track to Page Up/Down; drag thumb to scroll smoothly |
-| `Drag-and-Drop (XDnD)` | Drag any file from your file manager onto the window to open it |
+| `Drag-and-Drop (XDnD)` | Drag file to open; drag second file onto open window to **enable Diff Mode** |
 | `Mouse Scroll Wheel` | Smooth vertical scrolling (3 rows per notch) |
 | `Tab` / `Space` | Toggle active focus between **HEX** and **ASCII** panes |
-| `0-9`, `A-F` (or `a-f`) | Edit nibble in Hex pane |
+| `0-9`, `a-f` | Edit nibble in Hex pane |
 | Printable Characters | Write character directly in ASCII pane |
 | `Backspace` | Move back or revert edited nibble |
 | `Ctrl + S` | Save file modifications (`msync` sync to disk) |
@@ -93,7 +117,8 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
 | `F3` | Find next occurrence of active search pattern |
 | `F11` | Capture instant framebuffer screenshot (`asmhex_screenshot.ppm`) |
 | `F12` | Calculate and display CRC-32 & SHA-256 for active selection |
-| `Ctrl + Q` / `Esc` | Quit application |
+| `Esc` | Clear active selection or cancel modal input |
+| `Ctrl + Q` | Quit application |
 
 ---
 
@@ -107,7 +132,7 @@ asmhex/
 ├── src/
 │   ├── main.asm            # Application entry, CLI argument parser, X11 event loop
 │   ├── renderer.asm        # SSE SIMD pixel blitter, font renderer, LUTs, PPM screenshot
-│   ├── editor.asm          # Navigation, hex/ascii editing, undo engine, search, inspector
+│   ├── editor.asm          # Navigation, hex/ascii editing, diff engine, undo, search, inspector
 │   ├── hash.asm            # Pure assembly IEEE 802.3 CRC-32 & FIPS 180-4 SHA-256 algorithms
 │   ├── file_io.asm         # Direct Linux 64-bit syscalls (mmap, munmap, msync, open, close)
 │   ├── x11_shm.asm         # X11 display, window management, zero-copy MIT-SHM pipeline
@@ -115,9 +140,9 @@ asmhex/
 │       ├── constants.inc   # Colors, KeySyms, struct layouts, layout dimensions
 │       └── macros.inc      # Fast assembly macros & syscall helpers
 └── tests/
-    ├── test_suite.c        # Automated 15-point unit & integration test runner
+    ├── test_suite.c        # Automated 18-point unit & integration test runner
     ├── test_benchmark.c    # Render throughput & CPU cycle benchmark
-    └── test_f12_screenshot.c # F12 selection checksum demo verification
+    └── generate_demo_shots.c # Automated demonstration screenshot generator
 ```
 
 ---
@@ -143,11 +168,17 @@ make
 # Open and view/edit an existing file (e.g. ELF executable, ROM, raw image)
 ./asmhex /path/to/binary_file
 
+# Compare / Diff two binary files side-by-side
+./asmhex file1.bin file2.bin
+# or explicitly:
+./asmhex --diff file1.bin file2.bin
+
 # Headless screenshot generation
 ./asmhex --screenshot output.ppm /path/to/binary_file
+./asmhex --screenshot diff_output.ppm file1.bin file2.bin
 ```
 
-### Run Automated Tests
+### Run Automated Tests (18 Tests)
 ```bash
 make test
 ```

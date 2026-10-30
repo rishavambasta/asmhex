@@ -19,6 +19,14 @@ extern is_scratch
 extern file_path
 extern file_save
 
+extern file2_ptr
+extern file2_size
+extern file2_fd
+extern is_readonly2
+extern file2_path
+extern file2_open
+extern file2_close
+
 extern compute_crc32
 extern compute_sha256
 extern format_sha256_hex
@@ -53,7 +61,7 @@ section .data
     status_shot_saved: db "Screenshot saved to asmhex_screenshot.ppm!", 0
 
     col_hdr_offset:    db "Offset (h)", 0
-    col_hdr_hex:       db "00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F", 0
+    col_hdr_hex:       db "00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f", 0
     col_hdr_ascii:     db "Decoded text", 0
 
     insp_title:        db "── DATA INSPECTOR ──", 0
@@ -77,6 +85,23 @@ section .data
     insp_mode_hex:     db "HEX", 0
     insp_mode_asc:     db "ASCII", 0
 
+    insp_sec_diff:      db "── FILE DIFF (F2) ──", 0
+    insp_diff_cnt:      db "Diffs:     ", 0
+    insp_diff_active:   db "Active:    File ", 0
+    insp_diff_f1_val:   db "File 1:    0x", 0
+    insp_diff_f2_val:   db "File 2:    0x", 0
+    insp_diff_status:   db "Status:    ", 0
+    insp_diff_match:    db "IDENTICAL [==]", 0
+    insp_diff_mismatch: db "MISMATCH  [!=]", 0
+    insp_diff_eof:      db "<EOF>     ", 0
+    tag_diff:           db " [DIFF MODE] ", 0
+    insp_h_diff_nav:    db "F7 / F8      : Prev/Next Diff", 0
+    insp_h_diff_flip:   db "F2           : Flip File (1 <-> 2)", 0
+    status_flipped_1:   db "Flipped active display to File 1.", 0
+    status_flipped_2:   db "Flipped active display to File 2.", 0
+    status_diff_nav:    db "Jumped to difference at offset 0x", 0
+    status_no_diffs:    db "Files are bit-identical! 0 differences found.", 0
+
     insp_sec_sel:      db "── SELECTION ──", 0
     insp_sel_range:    db "Range:  0x", 0
     insp_sel_dots:     db "..0x", 0
@@ -90,9 +115,10 @@ section .data
 
     insp_sec_help:     db "── SHORTCUTS ──", 0
     insp_h1:           db "Arrows/Mouse : Move cursor", 0
+    insp_h_sel:        db "Shift+Arrows : Select range", 0
     insp_h2:           db "PgUp / PgDn  : Scroll page", 0
     insp_h3:           db "Tab / Space  : Switch pane", 0
-    insp_h4:           db "0-9, A-F     : Edit nibble", 0
+    insp_h4:           db "0-9, a-f     : Edit nibble", 0
     insp_h5:           db "Ctrl+S       : Save changes", 0
     insp_h6:           db "Ctrl+Z       : Undo edit", 0
     insp_h7:           db "Ctrl+G       : Goto offset", 0
@@ -109,10 +135,12 @@ section .data
     status_found_at:   db "Pattern found at offset 0x", 0
     status_goto_jump:  db "Jumped to offset 0x", 0
     status_hash_empty: db "Range empty (0 bytes) -> CRC32: 0x00000000 | SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 0
-    fmt_checksum_log:  db "[AsmHex Checksum] Range 0x%lX..0x%lX (%lu bytes):", 10, "  CRC-32:  0x%08X", 10, "  SHA-256: %s", 10, 0
+    fmt_checksum_log:  db "[AsmHex Checksum] Range 0x%lx..0x%lx (%lu bytes):", 10, "  CRC-32:  0x%08x", 10, "  SHA-256: %s", 10, 0
     fmt_checksum_empty: db "[AsmHex Checksum] Range empty (0 bytes):", 10, "  CRC-32:  0x00000000", 10, "  SHA-256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 10, 0
     empty_sha256_str:  db "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 0
-    status_help_bar:   db "^S Save  ^Z Undo  ^G Goto  ^F Find  F12 Hash  Tab Mode  ^Q Quit", 0
+    status_help_bar:      db "^S Save  ^Z Undo  Shift+Arrows Select  F12 Hash  ^G Goto  ^F Find  ^Q Quit", 0
+    status_help_bar_diff: db "^S Save  ^Z Undo  Shift+Arrows Select  F12 Hash  F7/F8 Diff  F2 Flip  ^Q Quit", 0
+    str_diff_sep:         db "<=>", 0
 
     prompt_goto:       db "GOTO OFFSET (hex or dec): ", 0
     prompt_goto_help:  db "[Enter] Jump to offset    [Esc] Cancel", 0
@@ -143,6 +171,9 @@ section .bss
     global last_sha256_hex
     global last_checksum_off
     global last_checksum_len
+    global is_diff_mode
+    global diff_active_file
+    global diff_count
 
     alignb 16
     cursor_offset:     resq 1            ; Current file byte offset
@@ -151,6 +182,11 @@ section .bss
     nibble_index:      resd 1            ; 0 = high nibble, 1 = low nibble
     is_dirty:          resd 1            ; 1 if modifications exist
     editor_mode:       resd 1            ; MODE_NORMAL (0), MODE_GOTO (1), MODE_SEARCH (2)
+
+    ; Diff & Multi-File Comparison State
+    is_diff_mode:      resd 1            ; 1 if diff mode active
+    diff_active_file:  resd 1            ; 0 = File 1 active, 1 = File 2 active
+    diff_count:        resq 1            ; Total count of differing bytes
 
     sel_start:              resq 1       ; Selection start offset
     sel_end:                resq 1       ; Selection end offset
@@ -222,6 +258,9 @@ editor_init:
     mov qword [rel last_checksum_off], 0
     mov qword [rel last_checksum_len], 0
     mov byte [rel last_sha256_hex], 0
+    mov dword [rel is_diff_mode], 0
+    mov dword [rel diff_active_file], 0
+    mov qword [rel diff_count], 0
 
     ; Set initial status message
     lea rdi, [rel status_ready]
@@ -251,6 +290,43 @@ editor_set_status:
     dec ecx
     mov [rel status_msg_len], ecx
     pop rbx
+    ret
+
+; ------------------------------------------------------------------------------
+; editor_get_active_file:
+; Returns rax = active file_ptr, rdx = active file_size
+; ------------------------------------------------------------------------------
+global editor_get_active_file
+editor_get_active_file:
+    cmp dword [rel is_diff_mode], 1
+    jne .act_f1
+    cmp dword [rel diff_active_file], 1
+    jne .act_f1
+    mov rax, [rel file2_ptr]
+    mov rdx, [rel file2_size]
+    ret
+.act_f1:
+    mov rax, [rel file_ptr]
+    mov rdx, [rel file_size]
+    ret
+
+; ------------------------------------------------------------------------------
+; editor_get_diff_max_size:
+; Returns rdx = max(file_size, file2_size) if diff mode, else file_size
+; ------------------------------------------------------------------------------
+global editor_get_diff_max_size
+editor_get_diff_max_size:
+    mov rdx, [rel file_size]
+    cmp dword [rel is_diff_mode], 1
+    jne .dms_ret
+    push rcx
+    mov rcx, [rel file2_size]
+    cmp rdx, rcx
+    jae .dms_no_swap
+    mov rdx, rcx
+.dms_no_swap:
+    pop rcx
+.dms_ret:
     ret
 
 ; ------------------------------------------------------------------------------
@@ -326,10 +402,10 @@ editor_move_left:
 global editor_next_byte
 editor_next_byte:
     mov rax, [rel cursor_offset]
-    mov rdx, [rel file_size]
+    call editor_get_diff_max_size
     test rdx, rdx
     jz .next_b_done
-    dec rdx                           ; max index = file_size - 1
+    dec rdx                           ; max index = max_size - 1
     cmp rax, rdx
     jae .next_b_done
     inc rax
@@ -376,7 +452,7 @@ global editor_move_down
 editor_move_down:
     mov rax, [rel cursor_offset]
     add rax, 16
-    mov rdx, [rel file_size]
+    call editor_get_diff_max_size
     test rdx, rdx
     jz .down_done
     cmp rax, rdx
@@ -410,7 +486,7 @@ global editor_page_down
 editor_page_down:
     mov rax, [rel cursor_offset]
     add rax, VISIBLE_ROWS * 16
-    mov rdx, [rel file_size]
+    call editor_get_diff_max_size
     test rdx, rdx
     jz .pgdn_done
     cmp rax, rdx
@@ -438,7 +514,7 @@ editor_end:
     ; Jump to end of current row
     mov rax, [rel cursor_offset]
     or rax, 15
-    mov rdx, [rel file_size]
+    call editor_get_diff_max_size
     test rdx, rdx
     jz .end_done
     cmp rax, rdx
@@ -511,7 +587,8 @@ editor_undo:
     movzx esi, byte [rax + 8]         ; old_val
 
     ; Restore old byte into memory buffer
-    mov rbx, [rel file_ptr]
+    call editor_get_active_file       ; rax = active file_ptr, rdx = active file_size
+    mov rbx, rax
     test rbx, rbx
     jz .undo_err
     mov [rbx + rdi], sil
@@ -520,6 +597,12 @@ editor_undo:
     mov [rel cursor_offset], rdi
     mov dword [rel nibble_index], 0
     call editor_ensure_visible
+
+    ; If in diff mode, recompute diffs
+    cmp dword [rel is_diff_mode], 1
+    jne .undo_no_diff
+    call diff_recompute
+.undo_no_diff:
 
     ; If undo_count reached 0, clear is_dirty
     cmp dword [rel undo_count], 0
@@ -993,9 +1076,19 @@ editor_handle_key:
     ; Normal Mode Processing
     ; --------------------------------------------------------------------------
 .handle_normal_mode:
+    ; Escape clears active selection
+    cmp r12, XK_Escape
+    je .k_esc
+
     ; Check for Ctrl shortcuts (state & 4)
     test r15d, 4
     jz .no_ctrl
+
+    ; Ctrl+A: Select All
+    cmp r12, 'a'
+    je .ctrl_a
+    cmp r12, 'A'
+    je .ctrl_a
 
     ; Ctrl+S: Save
     cmp r12, 's'
@@ -1038,29 +1131,41 @@ editor_handle_key:
 .no_ctrl:
     ; Navigation keys
     cmp r12, XK_Left
-    je .k_left
+    je .nav_left
     cmp r12, XK_Right
-    je .k_right
+    je .nav_right
     cmp r12, XK_Up
-    je .k_up
+    je .nav_up
     cmp r12, XK_Down
-    je .k_down
+    je .nav_down
     cmp r12, XK_Page_Up
-    je .k_pgup
+    je .nav_pgup
     cmp r12, XK_Page_Down
-    je .k_pgdn
+    je .nav_pgdn
     cmp r12, XK_Home
-    je .k_home
+    je .nav_home
     cmp r12, XK_End
-    je .k_end
+    je .nav_end
 
     ; Tab / Space: Switch pane
     cmp r12, XK_Tab
     je .k_tab
 
+    ; F2: Flip active file in diff mode
+    cmp r12, XK_F2
+    je .k_f2
+
     ; F3: Find next
     cmp r12, XK_F3
     je .k_f3
+
+    ; F7: Previous diff
+    cmp r12, XK_F7
+    je .k_f7
+
+    ; F8: Next diff
+    cmp r12, XK_F8
+    je .k_f8
 
     ; F11: Screenshot
     cmp r12, XK_F11
@@ -1075,37 +1180,233 @@ editor_handle_key:
     je .k_bs
 
     ; If in read-only mode, don't allow typing modifications
+    cmp dword [rel is_diff_mode], 1
+    jne .chk_main_ro
+    cmp dword [rel diff_active_file], 1
+    jne .chk_main_ro
+    cmp dword [rel is_readonly2], 1
+    je .key_done
+    jmp .chk_pane_edit
+.chk_main_ro:
     cmp dword [rel is_readonly], 1
     je .key_done
 
+.chk_pane_edit:
     ; Editing keys
     cmp dword [rel active_pane], PANE_HEX
     je .edit_hex
     jmp .edit_ascii
 
-.k_left:
+.k_esc:
+    cmp dword [rel has_selection], 1
+    jne .key_done
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
+    jmp .key_done
+
+.ctrl_a:
+    call editor_get_diff_max_size
+    test rdx, rdx
+    jz .key_done
+    mov qword [rel sel_start], 0
+    dec rdx
+    mov [rel sel_end], rdx
+    mov [rel cursor_offset], rdx
+    mov dword [rel nibble_index], 0
+    mov dword [rel has_selection], 1
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
+    call editor_ensure_visible
+    jmp .key_done
+
+.nav_left:
+    test r15d, ShiftMask
+    jnz .shift_left
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_move_left
     jmp .key_done
-.k_right:
+
+.shift_left:
+    cmp dword [rel has_selection], 0
+    jne .sl_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.sl_anchor_done:
+    mov rax, [rel cursor_offset]
+    test rax, rax
+    jz .nav_sel_update
+    dec rax
+    mov [rel cursor_offset], rax
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_right:
+    test r15d, ShiftMask
+    jnz .shift_right
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_move_right
     jmp .key_done
-.k_up:
+
+.shift_right:
+    cmp dword [rel has_selection], 0
+    jne .sr_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.sr_anchor_done:
+    mov rax, [rel cursor_offset]
+    call editor_get_diff_max_size
+    inc rax
+    cmp rax, rdx
+    jae .nav_sel_update
+    mov [rel cursor_offset], rax
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_up:
+    test r15d, ShiftMask
+    jnz .shift_up
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_move_up
     jmp .key_done
-.k_down:
+
+.shift_up:
+    cmp dword [rel has_selection], 0
+    jne .su_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.su_anchor_done:
+    call editor_move_up
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_down:
+    test r15d, ShiftMask
+    jnz .shift_down
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_move_down
     jmp .key_done
-.k_pgup:
+
+.shift_down:
+    cmp dword [rel has_selection], 0
+    jne .sd_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.sd_anchor_done:
+    call editor_move_down
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_pgup:
+    test r15d, ShiftMask
+    jnz .shift_pgup
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_page_up
     jmp .key_done
-.k_pgdn:
+
+.shift_pgup:
+    cmp dword [rel has_selection], 0
+    jne .spu_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.spu_anchor_done:
+    call editor_page_up
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_pgdn:
+    test r15d, ShiftMask
+    jnz .shift_pgdn
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_page_down
     jmp .key_done
-.k_home:
+
+.shift_pgdn:
+    cmp dword [rel has_selection], 0
+    jne .spd_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.spd_anchor_done:
+    call editor_page_down
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_home:
+    test r15d, ShiftMask
+    jnz .shift_home
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_home
     jmp .key_done
-.k_end:
+
+.shift_home:
+    cmp dword [rel has_selection], 0
+    jne .sh_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.sh_anchor_done:
+    test r15d, ControlMask
+    jz .sh_row
+    mov qword [rel cursor_offset], 0
+    jmp .sh_done
+.sh_row:
+    call editor_home
+.sh_done:
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_end:
+    test r15d, ShiftMask
+    jnz .shift_end
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_end
+    jmp .key_done
+
+.shift_end:
+    cmp dword [rel has_selection], 0
+    jne .se_anchor_done
+    mov rax, [rel cursor_offset]
+    mov [rel sel_start], rax
+.se_anchor_done:
+    test r15d, ControlMask
+    jz .se_row
+    call editor_get_diff_max_size
+    test rdx, rdx
+    jz .se_done
+    dec rdx
+    mov [rel cursor_offset], rdx
+    jmp .se_done
+.se_row:
+    call editor_end
+.se_done:
+    mov dword [rel nibble_index], 0
+    jmp .nav_sel_update
+
+.nav_sel_update:
+    call editor_ensure_visible
+    mov rax, [rel cursor_offset]
+    mov [rel sel_end], rax
+    cmp rax, [rel sel_start]
+    setne al
+    movzx eax, al
+    mov [rel has_selection], eax
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     jmp .key_done
 
 .k_tab:
@@ -1113,8 +1414,20 @@ editor_handle_key:
     mov dword [rel nibble_index], 0
     jmp .key_done
 
+.k_f2:
+    call editor_diff_flip
+    jmp .key_done
+
 .k_f3:
     call editor_search_next
+    jmp .key_done
+
+.k_f7:
+    call editor_diff_prev
+    jmp .key_done
+
+.k_f8:
+    call editor_diff_next
     jmp .key_done
 
 .k_f11:
@@ -1182,16 +1495,22 @@ editor_handle_key:
 .ctrl_home:
     mov qword [rel cursor_offset], 0
     mov dword [rel nibble_index], 0
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_ensure_visible
     jmp .key_done
 
 .ctrl_end:
-    mov rax, [rel file_size]
-    test rax, rax
+    call editor_get_diff_max_size
+    test rdx, rdx
     jz .key_done
-    dec rax
-    mov [rel cursor_offset], rax
+    dec rdx
+    mov [rel cursor_offset], rdx
     mov dword [rel nibble_index], 0
+    mov dword [rel has_selection], 0
+    mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     call editor_ensure_visible
     jmp .key_done
 
@@ -1230,11 +1549,12 @@ editor_handle_key:
 .apply_hex_val:
     ; al = 0..15 (nibble value)
     mov ebx, eax                      ; nibble in ebx
-    mov r8, [rel file_ptr]
-    test r8, r8
+    call editor_get_active_file       ; rax = active file_ptr, rdx = active file_size
+    test rax, rax
     jz .key_done
+    mov r8, rax
     mov r9, [rel cursor_offset]
-    cmp r9, [rel file_size]
+    cmp r9, rdx
     jae .key_done
 
     movzx eax, byte [r8 + r9]         ; current byte value
@@ -1255,6 +1575,10 @@ editor_handle_key:
     mov dl, al
     call editor_record_undo
     mov dword [rel nibble_index], 1
+    cmp dword [rel is_diff_mode], 1
+    jne .hex_hi_no_diff
+    call diff_recompute
+.hex_hi_no_diff:
     jmp .key_done
 
 .low_nibble:
@@ -1269,6 +1593,10 @@ editor_handle_key:
     mov sil, r10b
     mov dl, al
     call editor_record_undo
+    cmp dword [rel is_diff_mode], 1
+    jne .hex_lo_no_diff
+    call diff_recompute
+.hex_lo_no_diff:
     ; Advance cursor to next byte!
     call editor_next_byte
     jmp .key_done
@@ -1280,26 +1608,31 @@ editor_handle_key:
     test r14d, r14d
     jz .key_done
 
-    movzx eax, byte [r13]
-    cmp al, 32
+    movzx ebx, byte [r13]             ; Preserve character in ebx
+    cmp bl, 32
     jb .key_done
-    cmp al, 126
+    cmp bl, 126
     ja .key_done
 
-    mov r8, [rel file_ptr]
-    test r8, r8
+    call editor_get_active_file       ; rax = active file_ptr, rdx = active file_size
+    test rax, rax
     jz .key_done
+    mov r8, rax
     mov r9, [rel cursor_offset]
-    cmp r9, [rel file_size]
+    cmp r9, rdx
     jae .key_done
 
     movzx r10d, byte [r8 + r9]        ; old byte
-    mov [r8 + r9], al                 ; write new character
+    mov [r8 + r9], bl                 ; write new character
 
     mov rdi, r9
     mov sil, r10b
-    mov dl, al
+    mov dl, bl
     call editor_record_undo
+    cmp dword [rel is_diff_mode], 1
+    jne .asc_no_diff
+    call diff_recompute
+.asc_no_diff:
 
     ; Advance cursor
     call editor_move_right
@@ -1508,8 +1841,9 @@ editor_handle_mouse_move:
     cmp ebx, 0
     jle .move_done
 
-    ; max_sc = (file_size > 576) ? (file_size - 576 + 15) & ~15 : 0
-    mov r8, [rel file_size]
+    ; max_sc = (max_size > 576) ? (max_size - 576 + 15) & ~15 : 0
+    call editor_get_diff_max_size
+    mov r8, rdx
     cmp r8, 576
     jbe .move_done
     sub r8, 576
@@ -1627,26 +1961,26 @@ editor_handle_mouse_move:
 
 .col_ready:
     ; Target byte offset = scroll_offset + row * 16 + col (eax)
-    mov rdx, [rel scroll_offset]
+    mov r8, [rel scroll_offset]
     shl rbx, 4
-    add rdx, rbx
-    add rdx, rax                      ; rdx = target offset
+    add r8, rbx
+    add r8, rax                       ; r8 = target offset
 
-    ; Clamp target offset to file_size - 1
-    mov r8, [rel file_size]
-    test r8, r8
+    ; Clamp target offset to max_size - 1
+    call editor_get_diff_max_size     ; rdx = max_size
+    test rdx, rdx
     jz .move_done
-    cmp rdx, r8
+    cmp r8, rdx
     jb .target_in_range
-    mov rdx, r8
-    dec rdx                           ; file_size - 1
+    mov r8, rdx
+    dec r8                            ; max_size - 1
 .target_in_range:
-    mov [rel sel_end], rdx
-    mov [rel cursor_offset], rdx
+    mov [rel sel_end], r8
+    mov [rel cursor_offset], r8
 
     ; If sel_start != sel_end, has_selection = 1
     mov rax, [rel sel_start]
-    cmp rax, rdx
+    cmp rax, r8
     setne al
     movzx eax, al
     mov [rel has_selection], eax
@@ -1703,7 +2037,7 @@ editor_handle_wheel:
 .wheel_down:
     mov rax, [rel scroll_offset]
     add rax, 48
-    mov rdx, [rel file_size]
+    call editor_get_diff_max_size
     test rdx, rdx
     jz .wh_done
     cmp rax, rdx
@@ -1737,7 +2071,8 @@ render_scrollbar:
     call draw_rect
 
     ; Compute thumb
-    mov r8, [rel file_size]
+    call editor_get_diff_max_size
+    mov r8, rdx
     cmp r8, 576
     jbe .sb_full_page
 
@@ -2100,6 +2435,458 @@ render_row_selection_polygon:
     ret
 
 ; ------------------------------------------------------------------------------
+; diff_recompute:
+; Counts total differences between file_ptr and file2_ptr
+; ------------------------------------------------------------------------------
+global diff_recompute
+diff_recompute:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    cmp dword [rel is_diff_mode], 1
+    jne .dr_zero
+
+    mov r12, [rel file_ptr]
+    mov r13, [rel file2_ptr]
+    test r12, r12
+    jz .dr_zero
+    test r13, r13
+    jz .dr_zero
+
+    mov r14, [rel file_size]
+    mov r15, [rel file2_size]
+
+    mov rcx, r14
+    cmp rcx, r15
+    jbe .dr_len_ok
+    mov rcx, r15
+.dr_len_ok:
+    xor rbx, rbx                      ; diff count
+    xor r8, r8                       ; byte index = 0
+
+    test rcx, rcx
+    jz .dr_tail
+
+.dr_cmp_loop:
+    mov al, [r12 + r8]
+    cmp al, [r13 + r8]
+    je .dr_byte_match
+    inc rbx
+.dr_byte_match:
+    inc r8
+    cmp r8, rcx
+    jl .dr_cmp_loop
+
+.dr_tail:
+    mov rax, r14
+    sub rax, r15
+    jge .dr_tail_pos
+    neg rax
+.dr_tail_pos:
+    add rbx, rax
+    mov [rel diff_count], rbx
+    jmp .dr_done
+
+.dr_zero:
+    mov qword [rel diff_count], 0
+
+.dr_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; editor_diff_next:
+; Finds next difference from cursor_offset + 1
+; ------------------------------------------------------------------------------
+global editor_diff_next
+editor_diff_next:
+    cmp dword [rel is_diff_mode], 1
+    jne .edn_ret
+
+    mov r8, [rel file_ptr]
+    mov r9, [rel file2_ptr]
+    test r8, r8
+    jz .edn_ret
+    test r9, r9
+    jz .edn_ret
+
+    mov r10, [rel file_size]
+    mov r11, [rel file2_size]
+    cmp r10, r11
+    jae .edn_max_ok
+    mov r10, r11
+.edn_max_ok:
+    test r10, r10
+    jz .edn_ret
+
+    mov rax, [rel cursor_offset]
+    inc rax
+
+.edn_search:
+    cmp rax, r10
+    jae .edn_wrap
+
+    cmp rax, [rel file_size]
+    jae .edn_found
+    cmp rax, [rel file2_size]
+    jae .edn_found
+    mov cl, [r8 + rax]
+    cmp cl, [r9 + rax]
+    jne .edn_found
+    inc rax
+    jmp .edn_search
+
+.edn_wrap:
+    xor rax, rax
+.edn_wrap_loop:
+    cmp rax, [rel cursor_offset]
+    jae .edn_none_found
+
+    cmp rax, [rel file_size]
+    jae .edn_found
+    cmp rax, [rel file2_size]
+    jae .edn_found
+    mov cl, [r8 + rax]
+    cmp cl, [r9 + rax]
+    jne .edn_found
+    inc rax
+    jmp .edn_wrap_loop
+
+.edn_found:
+    mov [rel cursor_offset], rax
+    mov dword [rel nibble_index], 0
+    call editor_ensure_visible
+    lea rdi, [rel status_diff_nav]
+    mov esi, COLOR_DIFF_FG
+    call editor_set_status
+    ret
+
+.edn_none_found:
+    lea rdi, [rel status_no_diffs]
+    mov esi, COLOR_HEX_ASCII
+    call editor_set_status
+
+.edn_ret:
+    ret
+
+; ------------------------------------------------------------------------------
+; editor_diff_prev:
+; Finds previous difference from cursor_offset - 1
+; ------------------------------------------------------------------------------
+global editor_diff_prev
+editor_diff_prev:
+    cmp dword [rel is_diff_mode], 1
+    jne .edp_ret
+
+    mov r8, [rel file_ptr]
+    mov r9, [rel file2_ptr]
+    test r8, r8
+    jz .edp_ret
+    test r9, r9
+    jz .edp_ret
+
+    mov rax, [rel cursor_offset]
+    test rax, rax
+    jz .edp_wrap
+    dec rax
+
+.edp_search:
+    cmp rax, [rel file_size]
+    jae .edp_found
+    cmp rax, [rel file2_size]
+    jae .edp_found
+    mov cl, [r8 + rax]
+    cmp cl, [r9 + rax]
+    jne .edp_found
+    test rax, rax
+    jz .edp_wrap
+    dec rax
+    jmp .edp_search
+
+.edp_wrap:
+    mov rax, [rel file_size]
+    mov r11, [rel file2_size]
+    cmp rax, r11
+    jae .edp_wrap_max
+    mov rax, r11
+.edp_wrap_max:
+    test rax, rax
+    jz .edp_none
+    dec rax
+
+.edp_wrap_loop:
+    cmp rax, [rel cursor_offset]
+    jbe .edp_none
+
+    cmp rax, [rel file_size]
+    jae .edp_found
+    cmp rax, [rel file2_size]
+    jae .edp_found
+    mov cl, [r8 + rax]
+    cmp cl, [r9 + rax]
+    jne .edp_found
+    dec rax
+    jmp .edp_wrap_loop
+
+.edp_found:
+    mov [rel cursor_offset], rax
+    mov dword [rel nibble_index], 0
+    call editor_ensure_visible
+    lea rdi, [rel status_diff_nav]
+    mov esi, COLOR_DIFF_FG
+    call editor_set_status
+    ret
+
+.edp_none:
+    lea rdi, [rel status_no_diffs]
+    mov esi, COLOR_HEX_ASCII
+    call editor_set_status
+
+.edp_ret:
+    ret
+
+; ------------------------------------------------------------------------------
+; editor_diff_flip:
+; Toggles active display file between File 1 and File 2
+; ------------------------------------------------------------------------------
+global editor_diff_flip
+editor_diff_flip:
+    cmp dword [rel is_diff_mode], 1
+    jne .edf_ret
+    xor dword [rel diff_active_file], 1
+    cmp dword [rel diff_active_file], 1
+    jne .edf_f1
+    lea rdi, [rel status_flipped_2]
+    jmp .edf_set
+.edf_f1:
+    lea rdi, [rel status_flipped_1]
+.edf_set:
+    mov esi, COLOR_HEX_SPECIAL
+    call editor_set_status
+.edf_ret:
+    ret
+
+; ------------------------------------------------------------------------------
+; render_diff_inspector:
+; Displays Diff statistics, active file, File 1 vs File 2 byte values and match status
+; ------------------------------------------------------------------------------
+render_diff_inspector:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 8
+
+    cmp dword [rel is_diff_mode], 1
+    jne .rdi_done
+
+    mov rbx, [rel cursor_offset]
+
+    ; Section Title: ── FILE DIFF (F2) ──
+    lea rdi, [rel insp_sec_diff]
+    mov esi, INSPECTOR_X
+    mov edx, 328
+    mov ecx, COLOR_INSP_TITLE
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Line 1: Diffs count
+    lea rdi, [rel insp_diff_cnt]
+    mov esi, INSPECTOR_X
+    mov edx, 348
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    lea rdi, [rel str_buf_1]
+    mov rsi, [rel diff_count]
+    call format_dec_qword
+
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 88
+    mov edx, 348
+    mov ecx, COLOR_DIFF_FG
+    cmp qword [rel diff_count], 0
+    jne .draw_diff_cnt
+    mov ecx, COLOR_DIFF_MATCH
+.draw_diff_cnt:
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Line 2: Active file (1 or 2)
+    lea rdi, [rel insp_diff_active]
+    mov esi, INSPECTOR_X
+    mov edx, 366
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    lea rdi, [rel str_buf_1]
+    mov byte [rdi], '1'
+    cmp dword [rel diff_active_file], 1
+    jne .draw_act_file
+    mov byte [rdi], '2'
+.draw_act_file:
+    mov byte [rdi + 1], 0
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 104
+    mov edx, 366
+    mov ecx, COLOR_TEXT_BRIGHT
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Line 3: File 1 byte value at cursor
+    lea rdi, [rel insp_diff_f1_val]
+    mov esi, INSPECTOR_X
+    mov edx, 384
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    cmp rbx, [rel file_size]
+    jae .f1_eof
+
+    mov rax, [rel file_ptr]
+    movzx r12d, byte [rax + rbx]      ; r12d = file1 byte
+
+    lea r9, [rel hex_lut]
+    movzx eax, word [r9 + r12 * 2]
+    mov [rel str_buf_1], al
+    mov [rel str_buf_1 + 1], ah
+    mov byte [rel str_buf_1 + 2], ' '
+    mov byte [rel str_buf_1 + 3], '('
+    mov byte [rel str_buf_1 + 4], "'"
+    mov al, r12b
+    cmp al, 32
+    jb .f1_dot
+    cmp al, 126
+    jbe .f1_ch_ok
+.f1_dot:
+    mov al, '.'
+.f1_ch_ok:
+    mov [rel str_buf_1 + 5], al
+    mov byte [rel str_buf_1 + 6], "'"
+    mov byte [rel str_buf_1 + 7], ')'
+    mov byte [rel str_buf_1 + 8], 0
+    jmp .draw_f1_val
+
+.f1_eof:
+    lea rsi, [rel insp_diff_eof]
+    lea rdi, [rel str_buf_1]
+    mov ecx, 10
+    rep movsb
+
+.draw_f1_val:
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 88
+    mov edx, 384
+    mov ecx, COLOR_DIFF_PEER
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Line 4: File 2 byte value at cursor
+    lea rdi, [rel insp_diff_f2_val]
+    mov esi, INSPECTOR_X
+    mov edx, 402
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    cmp rbx, [rel file2_size]
+    jae .f2_eof
+
+    mov rax, [rel file2_ptr]
+    movzx r13d, byte [rax + rbx]      ; r13d = file2 byte
+
+    lea r9, [rel hex_lut]
+    movzx eax, word [r9 + r13 * 2]
+    mov [rel str_buf_1], al
+    mov [rel str_buf_1 + 1], ah
+    mov byte [rel str_buf_1 + 2], ' '
+    mov byte [rel str_buf_1 + 3], '('
+    mov byte [rel str_buf_1 + 4], "'"
+    mov al, r13b
+    cmp al, 32
+    jb .f2_dot
+    cmp al, 126
+    jbe .f2_ch_ok
+.f2_dot:
+    mov al, '.'
+.f2_ch_ok:
+    mov [rel str_buf_1 + 5], al
+    mov byte [rel str_buf_1 + 6], "'"
+    mov byte [rel str_buf_1 + 7], ')'
+    mov byte [rel str_buf_1 + 8], 0
+    jmp .draw_f2_val
+
+.f2_eof:
+    lea rsi, [rel insp_diff_eof]
+    lea rdi, [rel str_buf_1]
+    mov ecx, 10
+    rep movsb
+
+.draw_f2_val:
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 88
+    mov edx, 402
+    mov ecx, COLOR_DIFF_PEER
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Line 5: Match status (MISMATCH [!=] or IDENTICAL [==])
+    lea rdi, [rel insp_diff_status]
+    mov esi, INSPECTOR_X
+    mov edx, 420
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Compare values
+    cmp rbx, [rel file_size]
+    jae .st_mismatch
+    cmp rbx, [rel file2_size]
+    jae .st_mismatch
+    cmp r12b, r13b
+    jne .st_mismatch
+
+    lea rdi, [rel insp_diff_match]
+    mov ecx, COLOR_DIFF_MATCH
+    jmp .draw_match_st
+
+.st_mismatch:
+    lea rdi, [rel insp_diff_mismatch]
+    mov ecx, COLOR_DIFF_FG
+
+.draw_match_st:
+    mov esi, INSPECTOR_X + 88
+    mov edx, 420
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+.rdi_done:
+    add rsp, 8
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
 ; render_selection_inspector:
 ; Displays Selection Range, Length, and F12 Checksums in Inspector panel
 ; ------------------------------------------------------------------------------
@@ -2116,9 +2903,15 @@ render_selection_inspector:
     cmp dword [rel has_selection], 1
     jne .check_checksum_display
 
+    mov r14d, 328
+    cmp dword [rel is_diff_mode], 1
+    jne .draw_sel_hdr
+    mov r14d, 442
+
+.draw_sel_hdr:
     lea rdi, [rel insp_sec_sel]
     mov esi, INSPECTOR_X
-    mov edx, 328
+    mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -2132,9 +2925,10 @@ render_selection_inspector:
     mov r12, r8                       ; min
     mov r13, r9                       ; max
 
+    add r14d, 18
     lea rdi, [rel insp_sel_range]
     mov esi, INSPECTOR_X
-    mov edx, 348
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -2145,14 +2939,14 @@ render_selection_inspector:
 
     lea rdi, [rel str_buf_1]
     mov esi, INSPECTOR_X + 80
-    mov edx, 348
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
     lea rdi, [rel insp_sel_dots]
     mov esi, INSPECTOR_X + 144
-    mov edx, 348
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -2163,14 +2957,15 @@ render_selection_inspector:
 
     lea rdi, [rel str_buf_1]
     mov esi, INSPECTOR_X + 176
-    mov edx, 348
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
+    add r14d, 18
     lea rdi, [rel insp_sel_len]
     mov esi, INSPECTOR_X
-    mov edx, 366
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -2186,7 +2981,7 @@ render_selection_inspector:
 
     lea rdi, [rel str_buf_1]
     mov esi, INSPECTOR_X + 64
-    mov edx, 366
+    mov edx, r14d
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -2196,9 +2991,14 @@ render_selection_inspector:
     jne .rsi_done
 
     mov r14d, 328
+    cmp dword [rel is_diff_mode], 1
+    jne .chk_cs_sel
+    mov r14d, 442
+
+.chk_cs_sel:
     cmp dword [rel has_selection], 1
     jne .draw_checksum_block
-    mov r14d, 390
+    add r14d, 46                      ; Place below selection info
 
 .draw_checksum_block:
     ; Section Header: ── CHECKSUMS (F12) ──
@@ -2302,13 +3102,14 @@ editor_compute_selection_checksum:
     push r15
     sub rsp, 8                        ; 16-byte stack alignment
 
-    ; 1. Check if file is open / size > 0
-    mov r14, [rel file_size]
+    ; 1. Check if active file is open / size > 0
+    call editor_get_active_file       ; rax = active file_ptr, rdx = active file_size
+    mov r14, rdx
     test r14, r14
     jz .calc_empty
-    mov rax, [rel file_ptr]
     test rax, rax
     jz .calc_empty
+    mov r15, rax                      ; r15 = active base ptr
 
     ; 2. Determine target range
     cmp dword [rel has_selection], 1
@@ -2334,15 +3135,14 @@ editor_compute_selection_checksum:
 
 .use_whole_file:
     xor r12, r12                      ; offset = 0
-    mov rbx, r14                      ; length = file_size
+    mov rbx, r14                      ; length = active size
 
 .do_calc:
     mov [rel last_checksum_off], r12
     mov [rel last_checksum_len], rbx
 
-    ; Data pointer: [file_ptr] + r12
-    mov rax, [rel file_ptr]
-    lea rdi, [rax + r12]
+    ; Data pointer: [active file_ptr] + r12
+    lea rdi, [r15 + r12]
     mov rsi, rbx
 
     ; Compute CRC32
@@ -2558,6 +3358,51 @@ editor_render:
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
+    cmp dword [rel is_diff_mode], 1
+    jne .single_file_hdr
+
+    ; Draw tag_diff at x = 380
+    lea rdi, [rel tag_diff]
+    mov esi, 380
+    mov edx, 8
+    mov ecx, COLOR_DIFF_FG
+    mov r8d, COLOR_DIFF_BG
+    call draw_string
+
+    ; Draw File 1 path at x = 490
+    lea rdi, [rel file_path]
+    mov esi, 490
+    mov edx, 8
+    mov ecx, COLOR_TEXT_NORMAL
+    cmp dword [rel diff_active_file], 0
+    jne .hdr_f1_not_active
+    mov ecx, COLOR_INSP_VAL
+.hdr_f1_not_active:
+    mov r8d, COLOR_HEADER_BG
+    call draw_string
+
+    ; Draw "<=>" at x = 680
+    lea rdi, [rel str_diff_sep]
+    mov esi, 680
+    mov edx, 8
+    mov ecx, COLOR_DIFF_PEER
+    mov r8d, COLOR_HEADER_BG
+    call draw_string
+
+    ; Draw File 2 path at x = 720
+    lea rdi, [rel file2_path]
+    mov esi, 720
+    mov edx, 8
+    mov ecx, COLOR_TEXT_NORMAL
+    cmp dword [rel diff_active_file], 1
+    jne .hdr_f2_not_active
+    mov ecx, COLOR_INSP_VAL
+.hdr_f2_not_active:
+    mov r8d, COLOR_HEADER_BG
+    call draw_string
+    jmp .header_done
+
+.single_file_hdr:
     ; Draw file path at x = 450
     lea rdi, [rel file_path]
     mov esi, 450
@@ -2644,7 +3489,8 @@ editor_render:
     shl rax, 4
     add r13, rax                      ; r13 = row_offset
 
-    cmp r13, [rel file_size]
+    call editor_get_diff_max_size
+    cmp r13, rdx
     jae .rows_done
 
     ; row_y = SEPARATOR_Y + 6 + r12 * 16
@@ -2686,25 +3532,49 @@ editor_render:
     mov rbx, r13
     add rbx, r15                      ; rbx = byte_offset
 
-    cmp rbx, [rel file_size]
+    call editor_get_diff_max_size
+    cmp rbx, rdx
     jae .row_bytes_done
 
-    ; Read byte value from mapped memory
+    ; Check if byte is mismatch in diff mode
+    xor r8d, r8d                      ; r8d = is_diff (0 or 1)
+    cmp dword [rel is_diff_mode], 1
+    jne .chk_b_val
+    cmp rbx, [rel file_size]
+    jae .b_diff_yes
+    cmp rbx, [rel file2_size]
+    jae .b_diff_yes
     mov rax, [rel file_ptr]
-    movzx eax, byte [rax + rbx]       ; eax = byte value (0..255)
+    mov rdx, [rel file2_ptr]
+    mov al, [rax + rbx]
+    cmp al, [rdx + rbx]
+    je .chk_b_val
+.b_diff_yes:
+    mov r8d, 1
 
-    ; Check if byte is within active selection range
+.chk_b_val:
+    ; Read byte from active file
+    call editor_get_active_file       ; rax = active ptr, rdx = active size
+    xor ecx, ecx                      ; ecx = byte value
+    xor r9d, r9d                      ; r9d = has_byte (0 or 1)
+    cmp rbx, rdx
+    jae .b_act_eof
+    movzx ecx, byte [rax + rbx]
+    mov r9d, 1
+.b_act_eof:
+
+    ; Check if byte is in active selection range
     cmp dword [rel has_selection], 1
     jne .not_in_selection
-    mov r8, [rel sel_start]
-    mov r9, [rel sel_end]
-    cmp r8, r9
+    mov r10, [rel sel_start]
+    mov r11, [rel sel_end]
+    cmp r10, r11
     jle .bs_ord
-    xchg r8, r9
+    xchg r10, r11
 .bs_ord:
-    cmp rbx, r8
+    cmp rbx, r10
     jb .not_in_selection
-    cmp rbx, r9
+    cmp rbx, r11
     ja .not_in_selection
 
     ; BYTE IS IN SELECTION!
@@ -2718,37 +3588,60 @@ editor_render:
 .sel_no_gap:
     ; edx = hex_x
 
+    test r9d, r9d
+    jz .sel_eof_hex
+
     ; char 0 (high nibble)
-    push rax
+    push rcx
     push rdx
     mov edi, edx
     mov esi, r14d
-    lea r9, [rel hex_lut]
-    movzx edx, byte [r9 + rax * 2]
+    lea r10, [rel hex_lut]
+    movzx edx, byte [r10 + rcx * 2]
     mov ecx, COLOR_SEL_TEXT
     call draw_glyph_transparent
     pop rdx
-    pop rax
+    pop rcx
 
     ; char 1 (low nibble)
-    push rax
+    push rcx
     push rdx
     mov edi, edx
     add edi, FONT_W
     mov esi, r14d
-    lea r9, [rel hex_lut]
-    movzx edx, byte [r9 + rax * 2 + 1]
+    lea r10, [rel hex_lut]
+    movzx edx, byte [r10 + rcx * 2 + 1]
     mov ecx, COLOR_SEL_TEXT
     call draw_glyph_transparent
     pop rdx
-    pop rax
+    pop rcx
+    jmp .sel_ascii
 
+.sel_eof_hex:
+    push rdx
+    mov edi, edx
+    mov esi, r14d
+    mov edx, '-'
+    mov ecx, COLOR_SEL_TEXT
+    call draw_glyph_transparent
+    pop rdx
+
+    mov edi, edx
+    add edi, FONT_W
+    mov esi, r14d
+    mov edx, '-'
+    mov ecx, COLOR_SEL_TEXT
+    call draw_glyph_transparent
+
+.sel_ascii:
     ; 2. Draw ASCII preview Transparently over polygon fill
     mov edi, r15d
     shl edi, 3
     add edi, ASCII_START_X
     mov esi, r14d
-    mov edx, eax
+    mov edx, ecx                      ; byte value
+    test r9d, r9d
+    jz .sel_eof_asc
     cmp dl, 32
     jb .sel_dot
     cmp dl, 126
@@ -2756,6 +3649,10 @@ editor_render:
 .sel_dot:
     mov dl, '.'
 .sel_ch_ok:
+    jmp .sel_draw_asc
+.sel_eof_asc:
+    mov dl, '.'
+.sel_draw_asc:
     mov ecx, COLOR_SEL_TEXT
     call draw_glyph_transparent
 
@@ -2764,7 +3661,6 @@ editor_render:
 
 .not_in_selection:
     ; Calculate Hex X coordinate
-    ; x = HEX_START_X + r15 * BYTE_SPACING (+ GROUP_GAP if r15 >= 8)
     mov edx, r15d
     imul edx, BYTE_SPACING
     add edx, HEX_START_X
@@ -2774,104 +3670,179 @@ editor_render:
 .no_group_gap:
     ; edx = hex_x
 
-    ; Determine Hex Colors (fg in ecx, bg in r8d)
-    mov r8d, COLOR_BG
+    ; Determine Hex Colors (fg in r10d, bg in r11d)
+    mov r11d, COLOR_BG
     cmp rbx, [rel cursor_offset]
     jne .not_cursor_hex
 
     ; Cursor byte!
     cmp dword [rel active_pane], PANE_HEX
     jne .peer_cursor_hex
-    mov r8d, COLOR_CURSOR_BG
-    mov ecx, COLOR_CURSOR_FG
-    jmp .draw_hex_byte
+    mov r11d, COLOR_CURSOR_BG
+    mov r10d, COLOR_CURSOR_FG
+    jmp .draw_hex_cell
 
 .peer_cursor_hex:
-    mov r8d, COLOR_CURSOR_PEER
-    mov ecx, COLOR_TEXT_BRIGHT
-    jmp .draw_hex_byte
+    mov r11d, COLOR_CURSOR_PEER
+    mov r10d, COLOR_TEXT_BRIGHT
+    jmp .draw_hex_cell
 
 .not_cursor_hex:
-    ; Check if byte is modified
+    test r8d, r8d
+    jz .check_modified_hex
+    ; Differing byte in diff mode!
+    mov r11d, COLOR_DIFF_BG
+    mov r10d, COLOR_DIFF_FG
+    jmp .draw_hex_cell
+
+.check_modified_hex:
     push rdx
-    push rax
+    push rcx
+    push r8
+    push r9
     mov rdi, rbx
     call editor_is_byte_modified
     test eax, eax
-    pop rax
-    pop rdx
-    jz .check_byte_syntax_color
-    mov ecx, COLOR_MODIFIED
-    jmp .draw_hex_byte
-
-.check_byte_syntax_color:
-    test al, al
-    jnz .not_zero
-    mov ecx, COLOR_HEX_ZERO
-    jmp .draw_hex_byte
-.not_zero:
-    cmp al, 32
-    jb .ctrl_byte
-    cmp al, 126
-    ja .special_byte
-    mov ecx, COLOR_HEX_ASCII
-    jmp .draw_hex_byte
-.ctrl_byte:
-    mov ecx, COLOR_HEX_CTRL
-    jmp .draw_hex_byte
-.special_byte:
-    mov ecx, COLOR_HEX_SPECIAL
-
-.draw_hex_byte:
-    ; Draw two hex glyphs (eax has byte value, edx has hex_x)
-    ; char 0 (high nibble)
-    push rax
-    push rdx
-    push rcx
-    push r8
-
-    mov edi, edx
-    mov esi, r14d
-    lea r9, [rel hex_lut]
-    movzx edx, byte [r9 + rax * 2]
-    ; ecx = fg, r8d = bg
-    call draw_glyph
-
+    pop r9
     pop r8
     pop rcx
     pop rdx
-    pop rax
+    jz .check_byte_syntax_color
+    mov r10d, COLOR_MODIFIED
+    jmp .draw_hex_cell
 
-    ; char 1 (low nibble)
-    push rax
-    push rdx
+.check_byte_syntax_color:
+    test r9d, r9d
+    jnz .has_byte_syntax
+    mov r10d, COLOR_TEXT_DIM
+    jmp .draw_hex_cell
+
+.has_byte_syntax:
+    test cl, cl
+    jnz .not_zero
+    mov r10d, COLOR_HEX_ZERO
+    jmp .draw_hex_cell
+.not_zero:
+    cmp cl, 32
+    jb .ctrl_byte
+    cmp cl, 126
+    ja .special_byte
+    mov r10d, COLOR_HEX_ASCII
+    jmp .draw_hex_cell
+.ctrl_byte:
+    mov r10d, COLOR_HEX_CTRL
+    jmp .draw_hex_cell
+.special_byte:
+    mov r10d, COLOR_HEX_SPECIAL
+
+.draw_hex_cell:
+    test r9d, r9d
+    jz .draw_eof_hex
+
+    ; Draw two hex glyphs (cl = byte value, edx = hex_x, r10d = fg, r11d = bg)
     push rcx
+    push rdx
     push r8
+    push r9
+    push r10
+    push r11
+
+    mov edi, edx
+    mov esi, r14d
+    lea rax, [rel hex_lut]
+    movzx edx, byte [rax + rcx * 2]
+    mov ecx, r10d
+    mov r8d, r11d
+    call draw_glyph
+
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
 
     mov edi, edx
     add edi, FONT_W
     mov esi, r14d
-    lea r9, [rel hex_lut]
-    movzx edx, byte [r9 + rax * 2 + 1]
-    ; ecx = fg, r8d = bg
+    lea rax, [rel hex_lut]
+    movzx edx, byte [rax + rcx * 2 + 1]
+    mov ecx, r10d
+    mov r8d, r11d
     call draw_glyph
 
+    pop r11
+    pop r10
+    pop r9
     pop r8
-    pop rcx
     pop rdx
-    pop rax
+    pop rcx
+    jmp .draw_ascii_cell
 
+.draw_eof_hex:
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov edi, edx
+    mov esi, r14d
+    mov edx, '-'
+    mov ecx, r10d
+    mov r8d, r11d
+    call draw_glyph
+
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov edi, edx
+    add edi, FONT_W
+    mov esi, r14d
+    mov edx, '-'
+    mov ecx, r10d
+    mov r8d, r11d
+    call draw_glyph
+
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+
+.draw_ascii_cell:
     ; --------------------------------------------------------------------------
     ; Draw ASCII preview character
     ; --------------------------------------------------------------------------
-    ; ascii_x = ASCII_START_X + r15 * FONT_W
     mov edi, r15d
     shl edi, 3                        ; * 8
     add edi, ASCII_START_X
     mov esi, r14d
 
-    ; Determine display character (printable ASCII, otherwise '.')
-    mov edx, eax                      ; byte value
+    ; Determine display character
+    test r9d, r9d
+    jz .dot_char
+    mov edx, ecx                      ; byte value
     cmp dl, 32
     jb .dot_char
     cmp dl, 126
@@ -2881,47 +3852,60 @@ editor_render:
 .char_ok:
 
     ; Determine ASCII colors
-    mov r8d, COLOR_BG
+    mov r11d, COLOR_BG
     cmp rbx, [rel cursor_offset]
     jne .not_cursor_ascii
 
     cmp dword [rel active_pane], PANE_ASCII
     jne .peer_cursor_ascii
-    mov r8d, COLOR_CURSOR_BG
-    mov ecx, COLOR_CURSOR_FG
+    mov r11d, COLOR_CURSOR_BG
+    mov r10d, COLOR_CURSOR_FG
     jmp .draw_ascii_glyph
 
 .peer_cursor_ascii:
-    mov r8d, COLOR_CURSOR_PEER
-    mov ecx, COLOR_TEXT_BRIGHT
+    mov r11d, COLOR_CURSOR_PEER
+    mov r10d, COLOR_TEXT_BRIGHT
     jmp .draw_ascii_glyph
 
 .not_cursor_ascii:
-    ; Check if modified
-    push rax
+    test r8d, r8d
+    jz .check_modified_ascii
+    ; Diff byte!
+    mov r11d, COLOR_DIFF_BG
+    mov r10d, COLOR_DIFF_FG
+    jmp .draw_ascii_glyph
+
+.check_modified_ascii:
     push rdi
     push rsi
     push rdx
+    push rcx
+    push r8
+    push r9
     mov rdi, rbx
     call editor_is_byte_modified
     test eax, eax
+    pop r9
+    pop r8
+    pop rcx
     pop rdx
     pop rsi
     pop rdi
-    pop rax
     jz .ascii_syntax_color
-    mov ecx, COLOR_MODIFIED
+    mov r10d, COLOR_MODIFIED
     jmp .draw_ascii_glyph
 
 .ascii_syntax_color:
     cmp dl, '.'
     jne .ascii_normal
-    mov ecx, COLOR_HEX_ZERO
+    mov r10d, COLOR_HEX_ZERO
     jmp .draw_ascii_glyph
 .ascii_normal:
-    mov ecx, COLOR_TEXT_NORMAL
+    mov r10d, COLOR_TEXT_NORMAL
 
 .draw_ascii_glyph:
+    mov ecx, r10d
+    mov r8d, r11d
     call draw_glyph
 
     inc r15d
@@ -3234,11 +4218,23 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
+    ; Render Diff Inspector if in diff mode
+    call render_diff_inspector
+
     ; Render Selection stats in inspector (if selection active)
     call render_selection_inspector
 
     ; Shortcuts Cheat Sheet start Y coordinate
     mov r14d, 330
+    cmp dword [rel is_diff_mode], 1
+    jne .chk_has_sel
+    mov r14d, 442
+    cmp dword [rel has_selection], 1
+    jne .chk_cs_start
+    add r14d, 46
+    jmp .chk_cs_start
+
+.chk_has_sel:
     cmp dword [rel has_selection], 1
     jne .chk_cs_start
     mov r14d, 390
@@ -3246,7 +4242,7 @@ editor_render:
 .chk_cs_start:
     cmp dword [rel last_checksum_valid], 1
     jne .shortcuts_start
-    add r14d, 90                      ; Shift down for checksums block
+    add r14d, 70                      ; Shift down for checksums block
 
 .shortcuts_start:
     lea rdi, [rel insp_sec_help]
@@ -3256,11 +4252,81 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
+    cmp dword [rel is_diff_mode], 1
+    jne .draw_normal_shortcuts
+
+    ; Diff Mode Shortcuts
     add r14d, 18
-    lea rdi, [rel insp_h10]
+    lea rdi, [rel insp_h_diff_nav]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_DIFF_PEER
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h_diff_flip]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_DIFF_PEER
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h_sel]
     mov esi, INSPECTOR_X
     mov edx, r14d
     mov ecx, COLOR_HEX_ASCII
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h10]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h5]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h6]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h9]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+    jmp .render_status_bar
+
+.draw_normal_shortcuts:
+    add r14d, 18
+    lea rdi, [rel insp_h_sel]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_HEX_ASCII
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
+    lea rdi, [rel insp_h10]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
@@ -3358,6 +4424,10 @@ editor_render:
 
     ; Line 2: Help bar
     lea rdi, [rel status_help_bar]
+    cmp dword [rel is_diff_mode], 1
+    jne .draw_help_str
+    lea rdi, [rel status_help_bar_diff]
+.draw_help_str:
     mov esi, 16
     mov edx, r12d
     add edx, 28

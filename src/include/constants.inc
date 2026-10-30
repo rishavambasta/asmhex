@@ -79,6 +79,12 @@ COLOR_INSP_VAL      equ 0x0089DCEB   ; Sky Cyan
 COLOR_PROMPT_BG     equ 0x00313244   ; Surface0
 COLOR_PROMPT_FG     equ 0x00F9E2AF   ; Yellow
 
+; Diff & Multi-File Comparison Colors
+COLOR_DIFF_FG       equ 0x00F38BA8   ; Soft bright Red for differing bytes
+COLOR_DIFF_BG       equ 0x00451525   ; Dark wine tint for diff cell background
+COLOR_DIFF_PEER     equ 0x00F9E2AF   ; Warm Yellow for peer byte in inspector
+COLOR_DIFF_MATCH    equ 0x00A6E3A1   ; Mint Green for matching status
+
 ; Editor Modes
 MODE_NORMAL         equ 0
 MODE_GOTO           equ 1
@@ -102,9 +108,16 @@ XK_Page_Up          equ 0xFF55
 XK_Page_Down        equ 0xFF56
 XK_End              equ 0xFF57
 XK_Delete           equ 0xFFFF
+XK_F2               equ 0xFFBD
 XK_F3               equ 0xFFBE
+XK_F7               equ 0xFFC4
+XK_F8               equ 0xFFC5
 XK_F11              equ 0xFFC8
 XK_F12              equ 0xFFC9
+
+; X11 Modifier Masks
+ShiftMask           equ (1 << 0)
+ControlMask         equ (1 << 2)
 
 ; X11 Event Types
 KeyPress            equ 2

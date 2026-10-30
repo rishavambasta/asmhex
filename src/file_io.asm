@@ -32,6 +32,11 @@ section .bss
     global is_readonly
     global is_scratch
     global file_path
+    global file2_ptr
+    global file2_size
+    global file2_fd
+    global is_readonly2
+    global file2_path
 
     align 16
     file_ptr:       resq 1            ; Pointer to mapped memory
@@ -41,6 +46,14 @@ section .bss
     is_scratch:     resd 1            ; 1 if anonymous scratch buffer
     file_path:      resb 512          ; Path to opened file
     stat_buf:       resb 144          ; struct stat buffer
+
+    ; Secondary file for comparison / diffing
+    file2_ptr:      resq 1            ; Pointer to mapped memory for file 2
+    file2_size:     resq 1            ; Total file 2 size in bytes
+    file2_fd:       resd 1            ; File 2 descriptor
+    is_readonly2:   resd 1            ; 1 if read-only, 0 if read-write
+    file2_path:     resb 512          ; Path to opened file 2
+    stat_buf2:      resb 144          ; struct stat buffer for file 2
 
 section .text
 
@@ -360,4 +373,176 @@ file_close:
     mov dword [rel file_fd], -1
 
 .no_close:
+    ret
+
+; ------------------------------------------------------------------------------
+; file2_open:
+; Opens and memory-maps secondary file for comparison / diffing
+; Arguments:
+;   rdi = path string
+; Returns:
+;   rax = 0 on success, negative error code on failure
+; ------------------------------------------------------------------------------
+global file2_open
+file2_open:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8
+
+    mov r12, rdi                      ; save path pointer
+    test r12, r12
+    jz .f2_open_failed
+
+    ; If file2 was already open, close it first
+    call file2_close
+
+    ; Copy path to file2_path buffer
+    lea rsi, [r12]
+    lea rdi, [rel file2_path]
+    mov ecx, 511
+.f2_copy_path:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    test al, al
+    jz .f2_path_copied
+    dec ecx
+    jnz .f2_copy_path
+    mov byte [rdi], 0
+.f2_path_copied:
+
+    ; Try opening with O_RDWR (2)
+    mov rax, SYS_open
+    lea rdi, [rel file2_path]
+    mov esi, O_RDWR
+    xor edx, edx
+    syscall
+
+    cmp rax, 0
+    jge .f2_opened_rw
+
+    ; Open failed with RDWR, try O_RDONLY (0)
+    mov rax, SYS_open
+    lea rdi, [rel file2_path]
+    mov esi, O_RDONLY
+    xor edx, edx
+    syscall
+
+    cmp rax, 0
+    jl .f2_open_failed
+
+    ; Opened read-only
+    mov [rel file2_fd], eax
+    mov dword [rel is_readonly2], 1
+    jmp .f2_get_fstat
+
+.f2_opened_rw:
+    mov [rel file2_fd], eax
+    mov dword [rel is_readonly2], 0
+
+.f2_get_fstat:
+    ; fstat(fd, &stat_buf2)
+    mov rax, SYS_fstat
+    mov edi, [rel file2_fd]
+    lea rsi, [rel stat_buf2]
+    syscall
+
+    test rax, rax
+    jnz .f2_fstat_failed
+
+    ; st_size is at stat_buf2 + 48
+    mov rax, [rel stat_buf2 + 48]
+    mov [rel file2_size], rax
+
+    ; If size == 0, return error (empty file)
+    test rax, rax
+    jz .f2_mmap_failed
+
+    ; mmap:
+    cmp dword [rel is_readonly2], 1
+    je .f2_mmap_ro
+
+    ; MMap Read-Write
+    mov rax, SYS_mmap
+    xor edi, edi
+    mov rsi, [rel file2_size]
+    mov edx, PROT_READ | PROT_WRITE
+    mov r10d, MAP_SHARED
+    mov r8d, [rel file2_fd]
+    xor r9d, r9d
+    syscall
+    jmp .f2_check_mmap
+
+.f2_mmap_ro:
+    mov rax, SYS_mmap
+    xor edi, edi
+    mov rsi, [rel file2_size]
+    mov edx, PROT_READ
+    mov r10d, MAP_PRIVATE
+    mov r8d, [rel file2_fd]
+    xor r9d, r9d
+    syscall
+
+.f2_check_mmap:
+    cmp rax, -4095
+    jae .f2_mmap_failed
+
+    mov [rel file2_ptr], rax
+    xor eax, eax                      ; return 0 (success)
+    jmp .f2_done
+
+.f2_mmap_failed:
+.f2_fstat_failed:
+    mov edi, [rel file2_fd]
+    cmp edi, 0
+    jl .f2_open_failed
+    mov rax, SYS_close
+    syscall
+    mov dword [rel file2_fd], -1
+
+.f2_open_failed:
+    mov qword [rel file2_ptr], 0
+    mov qword [rel file2_size], 0
+    mov rax, -1
+
+.f2_done:
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; file2_close:
+; Unmaps and closes secondary file
+; ------------------------------------------------------------------------------
+global file2_close
+file2_close:
+    mov rdi, [rel file2_ptr]
+    test rdi, rdi
+    jz .f2_no_unmap
+
+    mov rsi, [rel file2_size]
+    test rsi, rsi
+    jz .f2_no_unmap
+    mov rax, SYS_munmap
+    syscall
+    mov qword [rel file2_ptr], 0
+
+.f2_no_unmap:
+    mov edi, [rel file2_fd]
+    cmp edi, 0
+    jl .f2_no_close
+    mov rax, SYS_close
+    syscall
+    mov dword [rel file2_fd], -1
+
+.f2_no_close:
+    mov qword [rel file2_ptr], 0
+    mov qword [rel file2_size], 0
     ret
