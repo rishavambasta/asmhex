@@ -32,15 +32,27 @@ int main() {
     fb_pitch = 1040 * 4;
     fb_data = malloc(1040 * 720 * 4);
 
-    // 1. Generate Diff Mode Shot
+    // 1. Generate Tabbed Diff View Shot
     file_open("test_data/firmware_v1.bin");
     file2_open("test_data/firmware_v2.bin");
     editor_init();
     is_diff_mode = 1;
     diff_recompute();
 
+    // Jump to first difference using F3 key
+    editor_handle_key(XK_F3, NULL, 0, 0);
+
     editor_render();
     dump_screenshot("diff_shot.ppm");
+    dump_screenshot("asmhex_tabbed_diff_demo.ppm");
+
+    // 2. Generate Tab 2 Active Shot (press F2)
+    editor_handle_key(XK_F2, NULL, 0, 0);
+    editor_render();
+    dump_screenshot("asmhex_tab2_active_demo.ppm");
+
+    // Toggle back to Tab 1
+    editor_handle_key(XK_F2, NULL, 0, 0);
 
     // 2. Generate Keyboard Selection & F12 Checksum Shot
     // Use Shift+Right and Shift+Down to select a range from 0x00 to 0x3F (64 bytes)

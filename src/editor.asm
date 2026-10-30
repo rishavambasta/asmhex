@@ -31,6 +31,8 @@ extern compute_crc32
 extern compute_sha256
 extern format_sha256_hex
 extern printf
+extern snprintf
+extern strlen
 
 extern init_renderer_luts
 extern draw_rect
@@ -95,12 +97,32 @@ section .data
     insp_diff_mismatch: db "MISMATCH  [!=]", 0
     insp_diff_eof:      db "<EOF>     ", 0
     tag_diff:           db " [DIFF MODE] ", 0
-    insp_h_diff_nav:    db "F7 / F8      : Prev/Next Diff", 0
-    insp_h_diff_flip:   db "F2           : Flip File (1 <-> 2)", 0
-    status_flipped_1:   db "Flipped active display to File 1.", 0
-    status_flipped_2:   db "Flipped active display to File 2.", 0
+    insp_h_diff_nav:    db "F3 / F7      : Next/Prev Diff", 0
+    insp_h_diff_flip:   db "F2           : Switch Tab (1 <-> 2)", 0
+    status_flipped_1:   db "[TAB 1 ACTIVE] Viewing File 1 (Press F2 to toggle tab)", 0
+    status_flipped_2:   db "[TAB 2 ACTIVE] Viewing File 2 (Press F2 to toggle tab)", 0
     status_diff_nav:    db "Jumped to difference at offset 0x", 0
     status_no_diffs:    db "Files are bit-identical! 0 differences found.", 0
+
+    fmt_tab1_active:    db "[1] %s", 0
+    fmt_tab1_inactive:  db " 1: %s", 0
+    fmt_tab2_active:    db "[2] %s", 0
+    fmt_tab2_inactive:  db " 2: %s", 0
+    str_diff_hdr_hint:  db "F2: Switch Tab | F3: Next Diff", 0
+    str_diff_list_lbl:  db "Diffs (", 0
+    fmt_int_close:      db "%u):", 0
+    fmt_hex_offset:     db "0x%04lx", 0
+    fmt_diff_cnt_hdr:     db "%u): ", 0
+    fmt_diff_active_chip: db "[0x%04lx]", 0
+    fmt_diff_chip:        db "0x%04lx", 0
+    str_dots:           db "... ", 0
+    str_more_diffs:     db "... (+more)", 0
+    str_no_diffs_msg:   db "Files are identical (0 diffs)", 0
+    status_help_bar_diff_tabs: db "F3: Next Diff | Shift+F3/F7: Prev Diff | F2: Switch File Tab | Esc: Deselect | F12: Checksums", 0
+    status_tab1_sel:    db "[TAB 1 ACTIVE] Viewing File 1 (Press F2 to toggle tab)", 0
+    status_tab2_sel:    db "[TAB 2 ACTIVE] Viewing File 2 (Press F2 to toggle tab)", 0
+    str_diff_nav_fmt:   db "[DIFF] Difference %u of %ld at offset 0x%lx  (Press F3: Next Diff, F2: Switch Tab)", 0
+    str_diff_gen_fmt:   db "[DIFF MODE] %ld differences  (Cursor at 0x%lx, Press F3 for next diff)", 0
 
     insp_sec_sel:      db "── SELECTION ──", 0
     insp_sel_range:    db "Range:  0x", 0
@@ -174,6 +196,13 @@ section .bss
     global is_diff_mode
     global diff_active_file
     global diff_count
+    global diff_list
+    global diff_list_count
+    global current_diff_idx
+    global diff_chip_count
+    global diff_chip_x_start
+    global diff_chip_x_end
+    global diff_chip_idx
     global visible_rows
     global visible_bytes
     global editor_update_geometry
@@ -194,6 +223,16 @@ section .bss
     is_diff_mode:      resd 1            ; 1 if diff mode active
     diff_active_file:  resd 1            ; 0 = File 1 active, 1 = File 2 active
     diff_count:        resq 1            ; Total count of differing bytes
+    diff_list_count:   resd 1            ; Count of recorded diff offsets
+    current_diff_idx:  resd 1            ; Index of active diff in list (-1 if none)
+    alignb 16
+    diff_list:         resq 1024         ; Up to 1024 diff offsets
+    tab1_name_buf:     resb 32           ; Basename buffer for Tab 1
+    tab2_name_buf:     resb 32           ; Basename buffer for Tab 2
+    diff_chip_count:   resd 1            ; Number of interactive diff chips visible in bottom bar
+    diff_chip_x_start: resd 16           ; Start X for visible diff chips
+    diff_chip_x_end:   resd 16           ; End X for visible diff chips
+    diff_chip_idx:     resd 16           ; diff_list index for visible diff chips
 
     sel_start:              resq 1       ; Selection start offset
     sel_end:                resq 1       ; Selection end offset
@@ -308,6 +347,9 @@ editor_init:
     mov dword [rel is_diff_mode], 0
     mov dword [rel diff_active_file], 0
     mov qword [rel diff_count], 0
+    mov dword [rel diff_list_count], 0
+    mov dword [rel current_diff_idx], -1
+    mov dword [rel diff_chip_count], 0
 
     ; Set initial status message
     lea rdi, [rel status_ready]
@@ -1470,14 +1512,28 @@ editor_handle_key:
     jmp .key_done
 
 .k_f3:
+    cmp dword [rel is_diff_mode], 1
+    jne .k_f3_search
+    test r15d, ShiftMask
+    jnz .k_f3_prev
+    call editor_diff_next
+    jmp .key_done
+.k_f3_prev:
+    call editor_diff_prev
+    jmp .key_done
+.k_f3_search:
     call editor_search_next
     jmp .key_done
 
 .k_f7:
+    cmp dword [rel is_diff_mode], 1
+    jne .key_done
     call editor_diff_prev
     jmp .key_done
 
 .k_f8:
+    cmp dword [rel is_diff_mode], 1
+    jne .key_done
     call editor_diff_next
     jmp .key_done
 
@@ -1715,7 +1771,90 @@ editor_handle_click:
     mov r12d, edi                     ; click_x
     mov r13d, esi                     ; click_y
 
+    ; 0A. Check Header Tabs (y < HEADER_H)
+    cmp r13d, HEADER_H
+    jge .not_header_area
+    cmp dword [rel is_diff_mode], 1
+    jne .click_done
+
+    ; Tab 1 click: x in [110, 310]
+    cmp r12d, 110
+    jl .click_done
+    cmp r12d, 310
+    jge .check_tab2_click
+    cmp dword [rel diff_active_file], 0
+    je .click_done
+    mov dword [rel diff_active_file], 0
+    call editor_ensure_visible
+    lea rdi, [rel status_tab1_sel]
+    mov esi, COLOR_INSP_VAL
+    call editor_set_status
+    jmp .click_done
+
+.check_tab2_click:
+    cmp r12d, 320
+    jl .click_done
+    cmp r12d, 520
+    jge .click_done
+    cmp dword [rel diff_active_file], 1
+    je .click_done
+    mov dword [rel diff_active_file], 1
+    call editor_ensure_visible
+    lea rdi, [rel status_tab2_sel]
+    mov esi, COLOR_INSP_VAL
+    call editor_set_status
+    jmp .click_done
+
+.not_header_area:
+    ; 0B. Check Bottom Status Bar Diff Chips (y >= win_h - STATUS_H)
+    mov eax, [rel win_h]
+    sub eax, STATUS_H
+    cmp r13d, eax
+    jl .check_scrollbar
+
+    cmp dword [rel is_diff_mode], 1
+    jne .click_done
+
+    ; Check if within Line 2 (diff list strip: y in [win_h - 48, win_h - 26])
+    mov eax, [rel win_h]
+    sub eax, 48
+    cmp r13d, eax
+    jl .click_done
+    mov eax, [rel win_h]
+    sub eax, 26
+    cmp r13d, eax
+    jge .click_done
+
+    ; Search clicked chip
+    xor ecx, ecx
+    lea r8, [rel diff_chip_x_start]
+    lea r9, [rel diff_chip_x_end]
+    lea r10, [rel diff_chip_idx]
+    lea r11, [rel diff_list]
+.chk_chip_loop:
+    cmp ecx, [rel diff_chip_count]
+    jge .click_done
+    cmp r12d, [r8 + rcx * 4]
+    jl .chk_chip_next
+    cmp r12d, [r9 + rcx * 4]
+    jge .chk_chip_next
+
+    ; Hit chip ecx!
+    mov eax, [r10 + rcx * 4]
+    mov [rel current_diff_idx], eax
+    mov rax, [r11 + rax * 8]
+    mov [rel cursor_offset], rax
+    mov dword [rel nibble_index], 0
+    call editor_ensure_visible
+    call diff_set_nav_status
+    jmp .click_done
+
+.chk_chip_next:
+    inc ecx
+    jmp .chk_chip_loop
+
     ; 1. Check Scrollbar Track Hit
+.check_scrollbar:
     cmp r12d, SCROLLBAR_X
     jl .not_scrollbar
     cmp r12d, SCROLLBAR_X + SCROLLBAR_W
@@ -2490,6 +2629,137 @@ render_row_selection_polygon:
     ret
 
 ; ------------------------------------------------------------------------------
+; get_basename:
+; Extracts filename from path (e.g. "path/to/file.bin" -> "file.bin")
+; rdi = path, rsi = out_buf, edx = max_len
+; ------------------------------------------------------------------------------
+global get_basename
+get_basename:
+    push rbx
+    test rdi, rdi
+    jz .gb_empty
+    cmp byte [rdi], 0
+    jz .gb_empty
+
+    ; Walk to end of path string
+    mov rax, rdi
+.gb_len_loop:
+    cmp byte [rax], 0
+    jz .gb_find_slash
+    inc rax
+    jmp .gb_len_loop
+
+.gb_find_slash:
+    mov rbx, rax
+.gb_back_loop:
+    cmp rbx, rdi
+    jbe .gb_found_start
+    dec rbx
+    cmp byte [rbx], '/'
+    je .gb_slash_hit
+    jmp .gb_back_loop
+
+.gb_slash_hit:
+    inc rbx
+    jmp .gb_copy
+
+.gb_found_start:
+    mov rbx, rdi
+
+.gb_copy:
+    xor ecx, ecx
+    dec edx                           ; reserve for null terminator
+.gb_cp_loop:
+    cmp ecx, edx
+    jge .gb_cp_done
+    mov al, [rbx + rcx]
+    test al, al
+    jz .gb_cp_done
+    mov [rsi + rcx], al
+    inc ecx
+    jmp .gb_cp_loop
+
+.gb_cp_done:
+    mov byte [rsi + rcx], 0
+    pop rbx
+    ret
+
+.gb_empty:
+    mov byte [rsi], 0
+    pop rbx
+    ret
+
+; ------------------------------------------------------------------------------
+; diff_update_current_idx:
+; Updates current_diff_idx to match cursor_offset if cursor is on a difference
+; ------------------------------------------------------------------------------
+global diff_update_current_idx
+diff_update_current_idx:
+    mov rcx, [rel cursor_offset]
+    mov edx, [rel diff_list_count]
+    lea r8, [rel diff_list]
+    xor eax, eax
+.duci_loop:
+    cmp eax, edx
+    jge .duci_not_found
+    cmp rcx, [r8 + rax * 8]
+    je .duci_found
+    inc eax
+    jmp .duci_loop
+.duci_found:
+    mov [rel current_diff_idx], eax
+    ret
+.duci_not_found:
+    mov dword [rel current_diff_idx], -1
+    ret
+
+; ------------------------------------------------------------------------------
+; diff_set_nav_status:
+; Formats status line describing currently navigated difference
+; ------------------------------------------------------------------------------
+global diff_set_nav_status
+diff_set_nav_status:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    sub rsp, 8
+
+    cmp dword [rel is_diff_mode], 1
+    jne .dsns_done
+
+    mov eax, [rel current_diff_idx]
+    test eax, eax
+    js .dsns_no_idx
+
+    inc eax                           ; 1-based index
+    lea rdi, [rel status_msg_buf]
+    mov esi, 256
+    lea rdx, [rel str_diff_nav_fmt]
+    mov ecx, eax                      ; arg 4: idx+1
+    mov r8, [rel diff_count]          ; arg 5: total diffs
+    mov r9, [rel cursor_offset]       ; arg 6: cursor_offset
+    xor eax, eax
+    call snprintf wrt ..plt
+    mov dword [rel status_msg_color], COLOR_DIFF_FG
+    jmp .dsns_done
+
+.dsns_no_idx:
+    lea rdi, [rel status_msg_buf]
+    mov esi, 256
+    lea rdx, [rel str_diff_gen_fmt]
+    mov rcx, [rel diff_count]
+    mov r8, [rel cursor_offset]
+    xor eax, eax
+    call snprintf wrt ..plt
+    mov dword [rel status_msg_color], COLOR_TEXT_DIM
+
+.dsns_done:
+    add rsp, 8
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
 ; diff_recompute:
 ; Counts total differences between file_ptr and file2_ptr
 ; ------------------------------------------------------------------------------
@@ -2502,6 +2772,11 @@ diff_recompute:
     push r13
     push r14
     push r15
+    sub rsp, 8                        ; 16-byte alignment (48 + 8 = 56)
+
+    mov dword [rel diff_list_count], 0
+    mov dword [rel current_diff_idx], -1
+    mov dword [rel diff_chip_count], 0
 
     cmp dword [rel is_diff_mode], 1
     jne .dr_zero
@@ -2522,16 +2797,22 @@ diff_recompute:
     mov rcx, r15
 .dr_len_ok:
     xor rbx, rbx                      ; diff count
-    xor r8, r8                       ; byte index = 0
+    xor r8, r8                        ; byte index = 0
 
     test rcx, rcx
     jz .dr_tail
 
+    lea r10, [rel diff_list]
 .dr_cmp_loop:
     mov al, [r12 + r8]
     cmp al, [r13 + r8]
     je .dr_byte_match
     inc rbx
+    mov edx, [rel diff_list_count]
+    cmp edx, 1024
+    jge .dr_byte_match
+    mov [r10 + rdx * 8], r8
+    inc dword [rel diff_list_count]
 .dr_byte_match:
     inc r8
     cmp r8, rcx
@@ -2539,18 +2820,41 @@ diff_recompute:
 
 .dr_tail:
     mov rax, r14
-    sub rax, r15
-    jge .dr_tail_pos
-    neg rax
-.dr_tail_pos:
-    add rbx, rax
+    cmp rax, r15
+    je .dr_store_count
+
+    ; Start from min(r14, r15) up to max(r14, r15)
+    mov r8, rcx
+    mov r9, r14
+    cmp r9, r15
+    jae .dr_tail_loop
+    mov r9, r15
+.dr_tail_loop:
+    inc rbx
+    mov edx, [rel diff_list_count]
+    cmp edx, 1024
+    jge .dr_tail_next
+    mov [r10 + rdx * 8], r8
+    inc dword [rel diff_list_count]
+.dr_tail_next:
+    inc r8
+    cmp r8, r9
+    jl .dr_tail_loop
+
+.dr_store_count:
     mov [rel diff_count], rbx
+    call diff_update_current_idx
+    call diff_set_nav_status
     jmp .dr_done
 
 .dr_zero:
     mov qword [rel diff_count], 0
+    mov dword [rel diff_list_count], 0
+    mov dword [rel current_diff_idx], -1
+    mov dword [rel diff_chip_count], 0
 
 .dr_done:
+    add rsp, 8
     pop r15
     pop r14
     pop r13
@@ -2565,6 +2869,10 @@ diff_recompute:
 ; ------------------------------------------------------------------------------
 global editor_diff_next
 editor_diff_next:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16                       ; 16-byte alignment
+
     cmp dword [rel is_diff_mode], 1
     jne .edn_ret
 
@@ -2621,10 +2929,9 @@ editor_diff_next:
     mov [rel cursor_offset], rax
     mov dword [rel nibble_index], 0
     call editor_ensure_visible
-    lea rdi, [rel status_diff_nav]
-    mov esi, COLOR_DIFF_FG
-    call editor_set_status
-    ret
+    call diff_update_current_idx
+    call diff_set_nav_status
+    jmp .edn_ret
 
 .edn_none_found:
     lea rdi, [rel status_no_diffs]
@@ -2632,6 +2939,8 @@ editor_diff_next:
     call editor_set_status
 
 .edn_ret:
+    add rsp, 16
+    pop rbp
     ret
 
 ; ------------------------------------------------------------------------------
@@ -2640,6 +2949,10 @@ editor_diff_next:
 ; ------------------------------------------------------------------------------
 global editor_diff_prev
 editor_diff_prev:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16                       ; 16-byte alignment
+
     cmp dword [rel is_diff_mode], 1
     jne .edp_ret
 
@@ -2697,10 +3010,9 @@ editor_diff_prev:
     mov [rel cursor_offset], rax
     mov dword [rel nibble_index], 0
     call editor_ensure_visible
-    lea rdi, [rel status_diff_nav]
-    mov esi, COLOR_DIFF_FG
-    call editor_set_status
-    ret
+    call diff_update_current_idx
+    call diff_set_nav_status
+    jmp .edp_ret
 
 .edp_none:
     lea rdi, [rel status_no_diffs]
@@ -2708,27 +3020,35 @@ editor_diff_prev:
     call editor_set_status
 
 .edp_ret:
+    add rsp, 16
+    pop rbp
     ret
 
 ; ------------------------------------------------------------------------------
 ; editor_diff_flip:
-; Toggles active display file between File 1 and File 2
+; Toggles active display file between Tab 1 and Tab 2
 ; ------------------------------------------------------------------------------
 global editor_diff_flip
 editor_diff_flip:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16                       ; 16-byte alignment
+
     cmp dword [rel is_diff_mode], 1
     jne .edf_ret
     xor dword [rel diff_active_file], 1
     cmp dword [rel diff_active_file], 1
     jne .edf_f1
-    lea rdi, [rel status_flipped_2]
+    lea rdi, [rel status_tab2_sel]
     jmp .edf_set
 .edf_f1:
-    lea rdi, [rel status_flipped_1]
+    lea rdi, [rel status_tab1_sel]
 .edf_set:
-    mov esi, COLOR_HEX_SPECIAL
+    mov esi, COLOR_INSP_VAL
     call editor_set_status
 .edf_ret:
+    add rsp, 16
+    pop rbp
     ret
 
 ; ------------------------------------------------------------------------------
@@ -3312,6 +3632,547 @@ editor_compute_selection_checksum:
     pop rbp
     ret
 
+; ------------------------------------------------------------------------------
+; render_header_tabs:
+; Draws Tab 1 and Tab 2 in the header bar
+; ------------------------------------------------------------------------------
+global render_header_tabs
+render_header_tabs:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 40                       ; stack buffer for tab label formatting
+
+    ; --- Tab 1 ---
+    ; Basename
+    lea rdi, [rel file_path]
+    lea rsi, [rel tab1_name_buf]
+    mov edx, 20
+    call get_basename
+
+    ; Check active tab
+    cmp dword [rel diff_active_file], 0
+    jne .tab1_inactive
+
+    ; Tab 1 Active
+    ; Draw background
+    mov edi, 110
+    mov esi, 3
+    mov edx, 200
+    mov ecx, 26
+    mov r8d, COLOR_TAB_ACTIVE_BG
+    call draw_rect
+
+    ; Draw top accent stripe (2px)
+    mov edi, 110
+    mov esi, 3
+    mov edx, 200
+    mov ecx, 2
+    mov r8d, COLOR_TAB_ACCENT
+    call draw_rect
+
+    ; Borders
+    mov edi, 110
+    mov esi, 200
+    mov edx, 3
+    mov ecx, COLOR_TAB_BORDER
+    call draw_hline                   ; top
+
+    mov edi, 110
+    mov esi, 3
+    mov edx, 26
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline                   ; left
+
+    mov edi, 309
+    mov esi, 3
+    mov edx, 26
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline                   ; right
+
+    ; Format tab text
+    lea rdi, [rsp]
+    mov esi, 32
+    lea rdx, [rel fmt_tab1_active]
+    lea rcx, [rel tab1_name_buf]
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    lea rdi, [rsp]
+    mov esi, 120
+    mov edx, 8
+    mov ecx, COLOR_TEXT_BRIGHT
+    mov r8d, COLOR_TAB_ACTIVE_BG
+    call draw_string
+    jmp .render_tab2
+
+.tab1_inactive:
+    ; Tab 1 Inactive
+    mov edi, 110
+    mov esi, 5
+    mov edx, 200
+    mov ecx, 24
+    mov r8d, COLOR_TAB_INACTIVE_BG
+    call draw_rect
+
+    ; Borders
+    mov edi, 110
+    mov esi, 200
+    mov edx, 5
+    mov ecx, COLOR_TAB_BORDER
+    call draw_hline
+
+    mov edi, 110
+    mov esi, 200
+    mov edx, 28
+    mov ecx, COLOR_TAB_BORDER
+    call draw_hline
+
+    mov edi, 110
+    mov esi, 5
+    mov edx, 24
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline
+
+    mov edi, 309
+    mov esi, 5
+    mov edx, 24
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline
+
+    ; Format text
+    lea rdi, [rsp]
+    mov esi, 32
+    lea rdx, [rel fmt_tab1_inactive]
+    lea rcx, [rel tab1_name_buf]
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    lea rdi, [rsp]
+    mov esi, 120
+    mov edx, 8
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_TAB_INACTIVE_BG
+    call draw_string
+
+.render_tab2:
+    ; --- Tab 2 ---
+    lea rdi, [rel file2_path]
+    lea rsi, [rel tab2_name_buf]
+    mov edx, 20
+    call get_basename
+
+    cmp dword [rel diff_active_file], 1
+    jne .tab2_inactive
+
+    ; Tab 2 Active
+    mov edi, 320
+    mov esi, 3
+    mov edx, 200
+    mov ecx, 26
+    mov r8d, COLOR_TAB_ACTIVE_BG
+    call draw_rect
+
+    mov edi, 320
+    mov esi, 3
+    mov edx, 200
+    mov ecx, 2
+    mov r8d, COLOR_TAB_ACCENT
+    call draw_rect
+
+    mov edi, 320
+    mov esi, 200
+    mov edx, 3
+    mov ecx, COLOR_TAB_BORDER
+    call draw_hline
+
+    mov edi, 320
+    mov esi, 3
+    mov edx, 26
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline
+
+    mov edi, 519
+    mov esi, 3
+    mov edx, 26
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline
+
+    lea rdi, [rsp]
+    mov esi, 32
+    lea rdx, [rel fmt_tab2_active]
+    lea rcx, [rel tab2_name_buf]
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    lea rdi, [rsp]
+    mov esi, 330
+    mov edx, 8
+    mov ecx, COLOR_TEXT_BRIGHT
+    mov r8d, COLOR_TAB_ACTIVE_BG
+    call draw_string
+    jmp .draw_header_hints
+
+.tab2_inactive:
+    ; Tab 2 Inactive
+    mov edi, 320
+    mov esi, 5
+    mov edx, 200
+    mov ecx, 24
+    mov r8d, COLOR_TAB_INACTIVE_BG
+    call draw_rect
+
+    mov edi, 320
+    mov esi, 200
+    mov edx, 5
+    mov ecx, COLOR_TAB_BORDER
+    call draw_hline
+
+    mov edi, 320
+    mov esi, 200
+    mov edx, 28
+    mov ecx, COLOR_TAB_BORDER
+    call draw_hline
+
+    mov edi, 320
+    mov esi, 5
+    mov edx, 24
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline
+
+    mov edi, 519
+    mov esi, 5
+    mov edx, 24
+    mov ecx, COLOR_TAB_BORDER
+    call draw_vline
+
+    lea rdi, [rsp]
+    mov esi, 32
+    lea rdx, [rel fmt_tab2_inactive]
+    lea rcx, [rel tab2_name_buf]
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    lea rdi, [rsp]
+    mov esi, 330
+    mov edx, 8
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_TAB_INACTIVE_BG
+    call draw_string
+
+.draw_header_hints:
+    ; Draw badge [DIFF MODE] at x = 535
+    lea rdi, [rel tag_diff]
+    mov esi, 535
+    mov edx, 8
+    mov ecx, COLOR_DIFF_FG
+    mov r8d, COLOR_DIFF_BG
+    call draw_string
+
+    ; Draw hints at x = 660 (if win_w >= 880)
+    mov eax, [rel win_w]
+    cmp eax, 880
+    jl .rht_done
+    lea rdi, [rel str_diff_hdr_hint]
+    mov esi, 660
+    mov edx, 8
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_HEADER_BG
+    call draw_string
+
+.rht_done:
+    add rsp, 40
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; render_diff_bottom_bar:
+; Draws 3-line bottom status and diff list panel when in diff mode
+; ------------------------------------------------------------------------------
+global render_diff_bottom_bar
+render_diff_bottom_bar:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 56                       ; stack buffer for formatting
+
+    mov r12d, [rel win_h]
+    sub r12d, STATUS_H                ; r12d = status_bar_y (win_h - 72)
+
+    ; --- Line 1: Status summary message (at y = r12d + 6) ---
+    lea rdi, [rel status_msg_buf]
+    mov esi, 16
+    mov edx, r12d
+    add edx, 6
+    mov ecx, [rel status_msg_color]
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+    ; Hairline divider above diff list
+    mov edi, 16
+    mov esi, [rel win_w]
+    sub esi, 32
+    mov edx, r12d
+    add edx, 24
+    mov ecx, COLOR_BORDER
+    call draw_hline
+
+    ; --- Line 2: Diff offsets listing (at y = r12d + 27) ---
+    mov dword [rel diff_chip_count], 0
+    mov r13d, 16                      ; r13d = cur_x
+    mov r14d, r12d
+    add r14d, 27                      ; r14d = cur_y
+
+    ; Draw "Diffs ("
+    lea rdi, [rel str_diff_list_lbl]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_INSP_TITLE
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+    add r13d, 56                      ; 7 * 8
+
+    ; Draw count + "): "
+    lea rdi, [rsp]
+    mov esi, 16
+    lea rdx, [rel fmt_diff_cnt_hdr]
+    mov ecx, [rel diff_list_count]
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    lea rdi, [rsp]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_DIFF_FG
+    cmp dword [rel diff_list_count], 0
+    jne .rdb_cnt_nonzero
+    mov ecx, COLOR_DIFF_MATCH
+.rdb_cnt_nonzero:
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+    ; Measure length of count string
+    lea rdi, [rsp]
+    call strlen wrt ..plt
+    shl eax, 3                        ; len * 8
+    add r13d, eax
+    add r13d, 8                       ; gap
+
+    ; Check if 0 diffs
+    cmp dword [rel diff_list_count], 0
+    jne .rdb_has_diffs
+
+    ; Draw "Files are identical (0 diffs)"
+    lea rdi, [rel str_no_diffs_msg]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_DIFF_MATCH
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+    jmp .rdb_line3
+
+.rdb_has_diffs:
+    ; Calculate start index and count to display (up to 8 chips)
+    mov eax, [rel diff_list_count]
+    mov ecx, 8
+    cmp eax, ecx
+    jbe .rdb_all_fit
+
+    ; More than 8 chips: center window around current_diff_idx
+    mov edx, [rel current_diff_idx]
+    test edx, edx
+    jns .rdb_idx_valid
+    xor edx, edx
+.rdb_idx_valid:
+    sub edx, 3
+    jns .rdb_start_pos
+    xor edx, edx
+.rdb_start_pos:
+    lea ebx, [edx + 8]
+    cmp ebx, eax
+    jbe .rdb_start_ok
+    mov edx, eax
+    sub edx, 8
+.rdb_start_ok:
+    mov ebx, edx                      ; ebx = start_idx
+    mov r15d, 8                       ; r15d = chips_to_draw
+    jmp .rdb_draw_chips
+
+.rdb_all_fit:
+    xor ebx, ebx                      ; start_idx = 0
+    mov r15d, eax                     ; chips_to_draw = count
+
+.rdb_draw_chips:
+    ; If start_idx > 0, draw "... "
+    test ebx, ebx
+    jz .rdb_loop_chips
+    lea rdi, [rel str_dots]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+    add r13d, 32                      ; 4 * 8
+
+.rdb_loop_chips:
+    test r15d, r15d
+    jz .rdb_after_chips
+
+    ; Check if window bounds exceeded (leave 90px margin on right)
+    mov eax, [rel win_w]
+    sub eax, 90
+    cmp r13d, eax
+    jge .rdb_after_chips
+
+    ; rbx = current diff_idx
+    lea r10, [rel diff_list]
+    mov rax, [r10 + rbx * 8]          ; diff offset
+
+    ; Check if active diff
+    cmp ebx, [rel current_diff_idx]
+    jne .rdb_chip_inactive
+
+    ; Active chip: "[0x%04lx]"
+    lea rdi, [rsp]
+    mov esi, 32
+    lea rdx, [rel fmt_diff_active_chip]
+    mov rcx, rax
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    ; Measure width
+    lea rdi, [rsp]
+    call strlen wrt ..plt
+    mov r8d, eax
+    shl r8d, 3                        ; chip_width
+
+    ; Store chip info for click
+    mov edx, [rel diff_chip_count]
+    cmp edx, 16
+    jge .rdb_skip_save1
+    lea r10, [rel diff_chip_x_start]
+    mov [r10 + rdx * 4], r13d
+    lea ecx, [r13d + r8d]
+    lea r10, [rel diff_chip_x_end]
+    mov [r10 + rdx * 4], ecx
+    lea r10, [rel diff_chip_idx]
+    mov [r10 + rdx * 4], ebx
+    inc dword [rel diff_chip_count]
+.rdb_skip_save1:
+
+    ; Draw active chip background rectangle
+    mov edi, r13d
+    dec edi
+    mov esi, r14d
+    dec esi
+    lea edx, [r8d + 2]
+    mov ecx, 18
+    mov r8d, COLOR_TAB_ACTIVE_BG
+    call draw_rect
+
+    ; Draw active chip text
+    lea rdi, [rsp]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_DIFF_FG
+    mov r8d, COLOR_TAB_ACTIVE_BG
+    call draw_string
+
+    lea rdi, [rsp]
+    call strlen wrt ..plt
+    shl eax, 3
+    add r13d, eax
+    add r13d, 12                      ; gap
+    jmp .rdb_next_chip
+
+.rdb_chip_inactive:
+    ; Inactive chip: "0x%04lx"
+    lea rdi, [rsp]
+    mov esi, 32
+    lea rdx, [rel fmt_diff_chip]
+    mov rcx, rax
+    xor eax, eax
+    call snprintf wrt ..plt
+
+    lea rdi, [rsp]
+    call strlen wrt ..plt
+    mov r8d, eax
+    shl r8d, 3                        ; chip_width
+
+    mov edx, [rel diff_chip_count]
+    cmp edx, 16
+    jge .rdb_skip_save2
+    lea r10, [rel diff_chip_x_start]
+    mov [r10 + rdx * 4], r13d
+    lea ecx, [r13d + r8d]
+    lea r10, [rel diff_chip_x_end]
+    mov [r10 + rdx * 4], ecx
+    lea r10, [rel diff_chip_idx]
+    mov [r10 + rdx * 4], ebx
+    inc dword [rel diff_chip_count]
+.rdb_skip_save2:
+
+    lea rdi, [rsp]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_DIFF_PEER
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+    lea rdi, [rsp]
+    call strlen wrt ..plt
+    shl eax, 3
+    add r13d, eax
+    add r13d, 12                      ; gap
+
+.rdb_next_chip:
+    inc ebx
+    dec r15d
+    jmp .rdb_loop_chips
+
+.rdb_after_chips:
+    ; If more diffs remain past what was drawn
+    cmp ebx, [rel diff_list_count]
+    jae .rdb_line3
+    lea rdi, [rel str_more_diffs]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+.rdb_line3:
+    ; --- Line 3: Shortcuts / Cheat Sheet (at y = r12d + 50) ---
+    lea rdi, [rel status_help_bar_diff_tabs]
+    mov esi, 16
+    mov edx, r12d
+    add edx, 50
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+    add rsp, 56
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
 ; ==============================================================================
 ; editor_render:
 ; Master screen rendering routine (draws header, data grid, inspector, and status)
@@ -3409,6 +4270,13 @@ editor_render:
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
+    cmp dword [rel is_diff_mode], 1
+    jne .single_file_hdr
+
+    call render_header_tabs
+    jmp .header_done
+
+.single_file_hdr:
     lea rdi, [rel sub_title]
     mov esi, 140
     mov edx, 8
@@ -3416,51 +4284,6 @@ editor_render:
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
-    cmp dword [rel is_diff_mode], 1
-    jne .single_file_hdr
-
-    ; Draw tag_diff at x = 380
-    lea rdi, [rel tag_diff]
-    mov esi, 380
-    mov edx, 8
-    mov ecx, COLOR_DIFF_FG
-    mov r8d, COLOR_DIFF_BG
-    call draw_string
-
-    ; Draw File 1 path at x = 490
-    lea rdi, [rel file_path]
-    mov esi, 490
-    mov edx, 8
-    mov ecx, COLOR_TEXT_NORMAL
-    cmp dword [rel diff_active_file], 0
-    jne .hdr_f1_not_active
-    mov ecx, COLOR_INSP_VAL
-.hdr_f1_not_active:
-    mov r8d, COLOR_HEADER_BG
-    call draw_string
-
-    ; Draw "<=>" at x = 680
-    lea rdi, [rel str_diff_sep]
-    mov esi, 680
-    mov edx, 8
-    mov ecx, COLOR_DIFF_PEER
-    mov r8d, COLOR_HEADER_BG
-    call draw_string
-
-    ; Draw File 2 path at x = 720
-    lea rdi, [rel file2_path]
-    mov esi, 720
-    mov edx, 8
-    mov ecx, COLOR_TEXT_NORMAL
-    cmp dword [rel diff_active_file], 1
-    jne .hdr_f2_not_active
-    mov ecx, COLOR_INSP_VAL
-.hdr_f2_not_active:
-    mov r8d, COLOR_HEADER_BG
-    call draw_string
-    jmp .header_done
-
-.single_file_hdr:
     ; Draw file path at x = 450
     lea rdi, [rel file_path]
     mov esi, 450
@@ -4470,6 +5293,14 @@ editor_render:
     cmp dword [rel editor_mode], MODE_NORMAL
     jne .render_modal_bar
 
+    ; In diff mode, render the 3-line tabbed diff bottom bar
+    cmp dword [rel is_diff_mode], 1
+    jne .render_normal_status_bar
+
+    call render_diff_bottom_bar
+    jmp .render_all_done
+
+.render_normal_status_bar:
     ; Normal Mode:
     ; Line 1: status_msg_buf
     lea rdi, [rel status_msg_buf]
@@ -4482,10 +5313,6 @@ editor_render:
 
     ; Line 2: Help bar
     lea rdi, [rel status_help_bar]
-    cmp dword [rel is_diff_mode], 1
-    jne .draw_help_str
-    lea rdi, [rel status_help_bar_diff]
-.draw_help_str:
     mov esi, 16
     mov edx, r12d
     add edx, 28

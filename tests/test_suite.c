@@ -79,6 +79,13 @@ extern uint64_t file2_size;
 extern uint32_t is_diff_mode;
 extern uint32_t diff_active_file;
 extern uint64_t diff_count;
+extern uint64_t diff_list[1024];
+extern uint32_t diff_list_count;
+extern int32_t current_diff_idx;
+extern uint32_t diff_chip_count;
+extern int32_t diff_chip_x_start[16];
+extern int32_t diff_chip_x_end[16];
+extern int32_t diff_chip_idx[16];
 extern void diff_recompute(void);
 extern void editor_diff_next(void);
 extern void editor_diff_prev(void);
@@ -618,12 +625,12 @@ int main() {
     // -------------------------------------------------------------------------
     printf("\nTest 19: Dynamic Window Resizing & Geometry Engine...\n");
 
-    // 1. Initial 720p geometry
+    // 1. Initial 720p geometry (with STATUS_H = 72)
     win_w = 1040;
     win_h = 720;
     fb_pitch = 1040 * 4;
     editor_update_geometry();
-    uint32_t expected_rows_720 = (720 - (52 + 54 + 16)) / 16; // 37 rows
+    uint32_t expected_rows_720 = (720 - (52 + 72 + 16)) / 16; // 36 rows
     assert(visible_rows == expected_rows_720);
     assert(visible_bytes == expected_rows_720 * 16);
     assert(editor_get_visible_rows() == expected_rows_720);
@@ -635,7 +642,7 @@ int main() {
     win_h = 1080;
     fb_pitch = 1920 * 4;
     editor_update_geometry();
-    uint32_t expected_rows_1080 = (1080 - (52 + 54 + 16)) / 16; // 59 rows
+    uint32_t expected_rows_1080 = (1080 - (52 + 72 + 16)) / 16; // 58 rows
     assert(visible_rows == expected_rows_1080);
     assert(visible_bytes == expected_rows_1080 * 16);
     printf("  -> 1920x1080 expansion: scaled up to %u visible rows, %u visible bytes.\n", visible_rows, visible_bytes);
@@ -654,7 +661,7 @@ int main() {
     win_h = 600;
     fb_pitch = 800 * 4;
     editor_update_geometry();
-    uint32_t expected_rows_600 = (600 - (52 + 54 + 16)) / 16; // 29 rows
+    uint32_t expected_rows_600 = (600 - (52 + 72 + 16)) / 16; // 28 rows
     assert(visible_rows == expected_rows_600);
     assert(visible_bytes == expected_rows_600 * 16);
     printf("  -> 800x600 compact: scaled down to %u visible rows, %u visible bytes.\n", visible_rows, visible_bytes);
@@ -667,17 +674,132 @@ int main() {
     free(fb_600);
 
     // 4. Cursor visibility preservation on window resize/shrink
-    // Place cursor at offset 800
     cursor_offset = 800;
     editor_ensure_visible();
-    // Offset 800 must be in [scroll_offset, scroll_offset + visible_bytes)
     assert(cursor_offset >= scroll_offset);
     assert(cursor_offset < scroll_offset + visible_bytes);
     printf("  -> editor_ensure_visible adjusted scroll_offset to 0x%lx, keeping cursor visible.\n", scroll_offset);
     file_close();
 
+    // -------------------------------------------------------------------------
+    // TEST 20: Tabbed Diff View, Bottom Diff Offsets Strip & F3 Navigation
+    // -------------------------------------------------------------------------
+    printf("\nTest 20: Tabbed Diff View, Bottom Diff List & F3 Navigation Engine...\n");
+    const char *tab_f1 = "/tmp/asmhex_tab1.dat";
+    const char *tab_f2 = "/tmp/asmhex_tab2.dat";
+
+    FILE *tf1 = fopen(tab_f1, "wb");
+    assert(tf1 != NULL);
+    uint8_t d1[128];
+    memset(d1, 0x11, 128);
+    d1[10] = 0xAA;
+    d1[35] = 0xBB;
+    d1[70] = 0xCC;
+    fwrite(d1, 1, 128, tf1);
+    fclose(tf1);
+
+    FILE *tf2 = fopen(tab_f2, "wb");
+    assert(tf2 != NULL);
+    uint8_t d2[128];
+    memset(d2, 0x11, 128);
+    d2[10] = 0x55;
+    d2[35] = 0x66;
+    d2[70] = 0x77;
+    fwrite(d2, 1, 128, tf2);
+    fclose(tf2);
+
+    assert(file_open(tab_f1) == 0);
+    assert(file2_open(tab_f2) == 0);
+    editor_init();
+
+    is_diff_mode = 1;
+    diff_recompute();
+
+    assert(diff_count == 3);
+    assert(diff_list_count == 3);
+    assert(diff_list[0] == 10);
+    assert(diff_list[1] == 35);
+    assert(diff_list[2] == 70);
+    printf("  -> Diff cache verified: 3 differences recorded at offsets 0x000a, 0x0023, 0x0046.\n");
+
+    // 1. Test Tab UI switching via clicks & F2
+    assert(diff_active_file == 0); // Tab 1 active
+    editor_handle_click(400, 15);  // Click on Tab 2
+    assert(diff_active_file == 1); // Tab 2 active
+    printf("  -> Click on Tab 2 successfully switched active tab to File 2.\n");
+
+    editor_handle_click(200, 15);  // Click on Tab 1
+    assert(diff_active_file == 0); // Tab 1 active
+    printf("  -> Click on Tab 1 successfully switched active tab to File 1.\n");
+
+    editor_handle_key(XK_F2, NULL, 0, 0); // Toggle tab via F2
+    assert(diff_active_file == 1);
+    editor_handle_key(XK_F2, NULL, 0, 0);
+    assert(diff_active_file == 0);
+    printf("  -> F2 key successfully toggles active tab.\n");
+
+    // 2. Test F3 Key Navigation (Next Diff)
+    cursor_offset = 0;
+    editor_handle_key(XK_F3, NULL, 0, 0);
+    assert(cursor_offset == 10 && current_diff_idx == 0);
+    printf("  -> F3 pressed: jumped to Diff 1 at offset 0x%lx (index %d).\n", cursor_offset, current_diff_idx);
+
+    editor_handle_key(XK_F3, NULL, 0, 0);
+    assert(cursor_offset == 35 && current_diff_idx == 1);
+    printf("  -> F3 pressed: jumped to Diff 2 at offset 0x%lx (index %d).\n", cursor_offset, current_diff_idx);
+
+    editor_handle_key(XK_F3, NULL, 0, 0);
+    assert(cursor_offset == 70 && current_diff_idx == 2);
+    printf("  -> F3 pressed: jumped to Diff 3 at offset 0x%lx (index %d).\n", cursor_offset, current_diff_idx);
+
+    // F3 wrap-around
+    editor_handle_key(XK_F3, NULL, 0, 0);
+    assert(cursor_offset == 10 && current_diff_idx == 0);
+    printf("  -> F3 wrap-around verified: cycled back to Diff 1.\n");
+
+    // 3. Test Shift+F3 and F7 (Previous Diff)
+    editor_handle_key(XK_F3, NULL, 0, 1 /* ShiftMask */);
+    assert(cursor_offset == 70 && current_diff_idx == 2);
+    printf("  -> Shift+F3 pressed: navigated backwards to Diff 3 (offset 0x%lx).\n", cursor_offset);
+
+    editor_handle_key(XK_F7, NULL, 0, 0);
+    assert(cursor_offset == 35 && current_diff_idx == 1);
+    printf("  -> F7 pressed: navigated backwards to Diff 2 (offset 0x%lx).\n", cursor_offset);
+
+    // 4. Test Bottom Diff List rendering & interactive chip click
+    uint32_t *fb_diff = malloc(1040 * 720 * 4);
+    assert(fb_diff != NULL);
+    fb_data = fb_diff;
+    win_w = 1040;
+    win_h = 720;
+    fb_pitch = 1040 * 4;
+    editor_render();
+
+    assert(diff_chip_count == 3);
+    assert(diff_chip_idx[0] == 0 && diff_chip_idx[1] == 1 && diff_chip_idx[2] == 2);
+    printf("  -> Bottom diff offsets rendered: %u clickable chips generated.\n", diff_chip_count);
+
+    // Click on Chip 2 (offset 70) in bottom bar
+    int chip2_x = (diff_chip_x_start[2] + diff_chip_x_end[2]) / 2;
+    int chip_y = 720 - 35; // Inside Line 2 (720 - 48 to 720 - 26)
+    editor_handle_click(chip2_x, chip_y);
+    assert(cursor_offset == 70 && current_diff_idx == 2);
+    printf("  -> Clicking bottom diff chip [0x0046] jumped cursor directly to offset 0x%lx.\n", cursor_offset);
+
+    // Click on Chip 0 (offset 10) in bottom bar
+    int chip0_x = (diff_chip_x_start[0] + diff_chip_x_end[0]) / 2;
+    editor_handle_click(chip0_x, chip_y);
+    assert(cursor_offset == 10 && current_diff_idx == 0);
+    printf("  -> Clicking bottom diff chip [0x000a] jumped cursor directly to offset 0x%lx.\n", cursor_offset);
+
+    free(fb_diff);
+    file2_close();
+    file_close();
+    remove(tab_f1);
+    remove(tab_f2);
+
     printf("\n========================================================\n");
-    printf("  ALL 19 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 20 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

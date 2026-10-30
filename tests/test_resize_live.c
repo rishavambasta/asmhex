@@ -29,7 +29,7 @@ int main() {
     printf("1. Initial window: %ux%u, visible_rows=%u, visible_bytes=%u\n",
            win_w, win_h, visible_rows, visible_bytes);
     assert(win_w == 1040 && win_h == 720);
-    assert(visible_rows == 37);
+    assert(visible_rows == 36);
 
     editor_render();
     x11_flush();
@@ -40,7 +40,7 @@ int main() {
     assert(r == 0);
     editor_update_geometry();
     assert(win_w == 1600 && win_h == 900);
-    assert(visible_rows == 48); // (900 - 122) / 16 = 48
+    assert(visible_rows == 47); // (900 - 140) / 16 = 47
     editor_render();
     x11_flush();
     printf("   -> 1600x900 successfully rendered! visible_rows=%u\n", visible_rows);
@@ -51,7 +51,7 @@ int main() {
     assert(r == 0);
     editor_update_geometry();
     assert(win_w == 800 && win_h == 600);
-    assert(visible_rows == 29);
+    assert(visible_rows == 28); // (600 - 140) / 16 = 28
     editor_render();
     x11_flush();
     printf("   -> 800x600 successfully rendered! visible_rows=%u\n", visible_rows);
@@ -62,7 +62,7 @@ int main() {
     assert(r == 0);
     editor_update_geometry();
     assert(win_w == 1920 && win_h == 1080);
-    assert(visible_rows == 59);
+    assert(visible_rows == 58); // (1080 - 140) / 16 = 58
     editor_render();
     x11_flush();
     printf("   -> 1920x1080 successfully rendered! visible_rows=%u\n", visible_rows);

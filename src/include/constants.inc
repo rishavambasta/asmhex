@@ -11,11 +11,11 @@ FONT_H              equ 16
 
 HEADER_H            equ 32
 COL_HDR_H           equ 20
-STATUS_H            equ 54
+STATUS_H            equ 72
 SEPARATOR_Y         equ 52
 
 BYTES_PER_ROW       equ 16
-VISIBLE_ROWS        equ 36       ; (720 - 52 - 54) / 16 = ~38 rows, we use 36 safely
+VISIBLE_ROWS        equ 36       ; (720 - 52 - 72 - 16) / 16 = 36 rows safely
 
 ; Scrollbar Geometry
 SCROLLBAR_X         equ 722
@@ -42,6 +42,12 @@ COLOR_STATUS_BG     equ 0x0011111B   ; Crust
 COLOR_HEADER_BG     equ 0x00181825   ; Mantle
 COLOR_BORDER        equ 0x00313244   ; Surface0
 COLOR_DIVIDER       equ 0x0045475A   ; Surface1
+
+; Tabbed Diff View Colors
+COLOR_TAB_ACTIVE_BG    equ 0x002A2B3D   ; Elevated active tab background
+COLOR_TAB_INACTIVE_BG  equ 0x00151521   ; Muted inactive tab background
+COLOR_TAB_BORDER       equ 0x0045475A   ; Tab perimeter border
+COLOR_TAB_ACCENT       equ 0x0089DCEB   ; Bright Cyan active tab highlight stripe
 
 ; Scrollbar Colors
 COLOR_SCROLL_TRACK  equ 0x00151521   ; Darker slate track
@@ -108,8 +114,9 @@ XK_Page_Up          equ 0xFF55
 XK_Page_Down        equ 0xFF56
 XK_End              equ 0xFF57
 XK_Delete           equ 0xFFFF
-XK_F2               equ 0xFFBD
-XK_F3               equ 0xFFBE
+XK_F1               equ 0xFFBE
+XK_F2               equ 0xFFBF
+XK_F3               equ 0xFFC0
 XK_F7               equ 0xFFC4
 XK_F8               equ 0xFFC5
 XK_F11              equ 0xFFC8
