@@ -11,9 +11,9 @@ LDFLAGS   := -no-pie -lX11 -lXext
 BUILD_DIR := build
 BIN       := asmhex
 
-SRCS      := src/renderer.asm src/file_io.asm src/editor.asm src/x11_shm.asm src/main.asm
+SRCS      := src/renderer.asm src/file_io.asm src/editor.asm src/x11_shm.asm src/hash.asm src/main.asm
 OBJS      := $(patsubst src/%.asm, $(BUILD_DIR)/%.o, $(SRCS))
-LIB_OBJS  := $(BUILD_DIR)/renderer.o $(BUILD_DIR)/file_io.o $(BUILD_DIR)/editor.o $(BUILD_DIR)/x11_shm.o
+LIB_OBJS  := $(BUILD_DIR)/renderer.o $(BUILD_DIR)/file_io.o $(BUILD_DIR)/editor.o $(BUILD_DIR)/x11_shm.o $(BUILD_DIR)/hash.o
 
 .PHONY: all clean run test benchmark
 
@@ -45,5 +45,5 @@ run: $(BIN)
 	./$(BIN)
 
 clean:
-	rm -rf $(BUILD_DIR) $(BIN) *.ppm screenshot.png sample_elf.png /tmp/asmhex_test.dat
+	rm -rf $(BUILD_DIR) $(BIN) *.ppm *.png /tmp/asmhex_test.dat
 

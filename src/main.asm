@@ -40,6 +40,7 @@ extern file_close
 extern file_path
 extern file_size
 
+extern init_crc32_table
 extern init_renderer_luts
 extern editor_init
 extern editor_render
@@ -138,8 +139,9 @@ main:
     call file_create_scratch
 
 .file_ready:
-    ; 2. Initialize Fast Rendering Lookup Tables (Hex & Binary LUTs)
+    ; 2. Initialize Fast Rendering Lookup Tables & CRC32 Lookup Table
     call init_renderer_luts
+    call init_crc32_table
 
     ; 3. Initialize Editor State (cursor, undo stack, colors)
     call editor_init

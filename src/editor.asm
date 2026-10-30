@@ -19,6 +19,11 @@ extern is_scratch
 extern file_path
 extern file_save
 
+extern compute_crc32
+extern compute_sha256
+extern format_sha256_hex
+extern printf
+
 extern init_renderer_luts
 extern draw_rect
 extern draw_rect_alpha
@@ -79,6 +84,10 @@ section .data
     insp_sel_bytes:    db " B (0x", 0
     str_close_paren:   db ")", 0
 
+    insp_sec_hash:     db "── CHECKSUMS (F12) ──", 0
+    insp_crc_lbl:      db "CRC-32:  0x", 0
+    insp_sha_lbl:      db "SHA-256:", 0
+
     insp_sec_help:     db "── SHORTCUTS ──", 0
     insp_h1:           db "Arrows/Mouse : Move cursor", 0
     insp_h2:           db "PgUp / PgDn  : Scroll page", 0
@@ -89,6 +98,8 @@ section .data
     insp_h7:           db "Ctrl+G       : Goto offset", 0
     insp_h8:           db "Ctrl+F       : Find pattern", 0
     insp_h9:           db "Ctrl+Q / Esc : Quit", 0
+    insp_h10:          db "F12          : Checksums (SHA/CRC)", 0
+    insp_h11:          db "F11          : Screenshot", 0
 
     status_ready:      db "Ready. Press Ctrl+S to save changes. Ctrl+Z to undo.", 0
     status_saved:      db "File saved successfully (msync committed to disk).", 0
@@ -97,7 +108,11 @@ section .data
     status_not_found:  db "Pattern not found.", 0
     status_found_at:   db "Pattern found at offset 0x", 0
     status_goto_jump:  db "Jumped to offset 0x", 0
-    status_help_bar:   db "^S Save  ^Z Undo  ^G Goto  ^F Find  Tab Mode  ^Q Quit  [Click/Wheel: Navigate]", 0
+    status_hash_empty: db "Range empty (0 bytes) -> CRC32: 0x00000000 | SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 0
+    fmt_checksum_log:  db "[AsmHex Checksum] Range 0x%lX..0x%lX (%lu bytes):", 10, "  CRC-32:  0x%08X", 10, "  SHA-256: %s", 10, 0
+    fmt_checksum_empty: db "[AsmHex Checksum] Range empty (0 bytes):", 10, "  CRC-32:  0x00000000", 10, "  SHA-256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 10, 0
+    empty_sha256_str:  db "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 0
+    status_help_bar:   db "^S Save  ^Z Undo  ^G Goto  ^F Find  F12 Hash  Tab Mode  ^Q Quit", 0
 
     prompt_goto:       db "GOTO OFFSET (hex or dec): ", 0
     prompt_goto_help:  db "[Enter] Jump to offset    [Esc] Cancel", 0
@@ -123,6 +138,11 @@ section .bss
     global drag_scroll_orig
     global thumb_y
     global thumb_h
+    global last_checksum_valid
+    global last_crc32
+    global last_sha256_hex
+    global last_checksum_off
+    global last_checksum_len
 
     alignb 16
     cursor_offset:     resq 1            ; Current file byte offset
@@ -141,6 +161,15 @@ section .bss
     drag_scroll_orig:       resq 1       ; Scroll offset when drag started
     thumb_y:                resd 1       ; Current computed thumb Y
     thumb_h:                resd 1       ; Current computed thumb H
+
+    ; Active selection checksums (F12)
+    last_checksum_valid:   resd 1        ; 1 if checksums valid & computed
+    last_crc32:            resd 1        ; IEEE 802.3 CRC32
+    last_sha256_digest:    resb 32       ; Binary SHA256 (32 bytes)
+    last_sha256_hex:       resb 68       ; Lowercase Hex SHA256 (64 chars + null)
+    last_checksum_off:     resq 1        ; Range start offset
+    last_checksum_len:     resq 1        ; Range byte count
+    status_hash_buf:       resb 128      ; Status line formatted checksum buffer
 
     ; Undo stack: 4096 entries (16 bytes each: offset (8), old_val (1), new_val (1), pad (6))
     undo_count:        resd 1
@@ -182,11 +211,17 @@ editor_init:
     mov qword [rel sel_end], 0
     mov dword [rel has_selection], 0
     mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     mov dword [rel is_dragging_scrollbar], 0
     mov dword [rel drag_mouse_y], 0
     mov qword [rel drag_scroll_orig], 0
     mov dword [rel thumb_y], SEPARATOR_Y
     mov dword [rel thumb_h], SCROLL_THUMB_MIN_H
+    mov dword [rel last_checksum_valid], 0
+    mov dword [rel last_crc32], 0
+    mov qword [rel last_checksum_off], 0
+    mov qword [rel last_checksum_len], 0
+    mov byte [rel last_sha256_hex], 0
 
     ; Set initial status message
     lea rdi, [rel status_ready]
@@ -436,6 +471,8 @@ editor_record_undo:
 
     ; Same offset! Just update new_val, keep original old_val intact
     mov [rax + 9], dl
+    mov dword [rel is_dirty], 1
+    mov dword [rel last_checksum_valid], 0
     ret
 
 .new_undo_entry:
@@ -453,6 +490,7 @@ editor_record_undo:
     mov [rax + 9], dl                 ; new_val
     inc dword [rel undo_count]
     mov dword [rel is_dirty], 1
+    mov dword [rel last_checksum_valid], 0
 .undo_full:
     ret
 
@@ -477,6 +515,7 @@ editor_undo:
     test rbx, rbx
     jz .undo_err
     mov [rbx + rdi], sil
+    mov dword [rel last_checksum_valid], 0
 
     mov [rel cursor_offset], rdi
     mov dword [rel nibble_index], 0
@@ -1020,11 +1059,15 @@ editor_handle_key:
     je .k_tab
 
     ; F3: Find next
-    cmp r12, 0xFFBE                  ; XK_F3
+    cmp r12, XK_F3
     je .k_f3
 
-    ; F12: Screenshot
-    cmp r12, 0xFFC9                  ; XK_F12
+    ; F11: Screenshot
+    cmp r12, XK_F11
+    je .k_f11
+
+    ; F12: Range Checksums (SHA-256 & CRC-32)
+    cmp r12, XK_F12
     je .k_f12
 
     ; Backspace in Hex or ASCII pane
@@ -1074,12 +1117,16 @@ editor_handle_key:
     call editor_search_next
     jmp .key_done
 
-.k_f12:
+.k_f11:
     lea rdi, [rel screenshot_file]
     call dump_screenshot
     lea rdi, [rel status_shot_saved]
     mov esi, COLOR_HEX_ASCII
     call editor_set_status
+    jmp .key_done
+
+.k_f12:
+    call editor_compute_selection_checksum
     jmp .key_done
 
 .k_bs:
@@ -1311,6 +1358,7 @@ editor_handle_click:
     mov [rel drag_scroll_orig], rax
     mov dword [rel has_selection], 0
     mov dword [rel is_selecting], 0
+    mov dword [rel last_checksum_valid], 0
     jmp .click_done
 
 .sc_page_up:
@@ -1385,6 +1433,7 @@ editor_handle_click:
     mov [rel sel_end], rdx
     mov dword [rel is_selecting], 1
     mov dword [rel has_selection], 0
+    mov dword [rel last_checksum_valid], 0
     mov dword [rel is_dragging_scrollbar], 0
     call editor_ensure_visible
     jmp .click_done
@@ -1413,6 +1462,7 @@ editor_handle_click:
     mov [rel sel_end], rdx
     mov dword [rel is_selecting], 1
     mov dword [rel has_selection], 0
+    mov dword [rel last_checksum_valid], 0
     mov dword [rel is_dragging_scrollbar], 0
     call editor_ensure_visible
 
@@ -2051,7 +2101,7 @@ render_row_selection_polygon:
 
 ; ------------------------------------------------------------------------------
 ; render_selection_inspector:
-; Displays Selection Range and Length in Inspector panel
+; Displays Selection Range, Length, and F12 Checksums in Inspector panel
 ; ------------------------------------------------------------------------------
 render_selection_inspector:
     push rbp
@@ -2059,10 +2109,12 @@ render_selection_inspector:
     push rbx
     push r12
     push r13
-    sub rsp, 8
+    push r14
+    push r15
+    sub rsp, 8                        ; 16-byte stack alignment (40 + 8 = 48)
 
     cmp dword [rel has_selection], 1
-    jne .rsi_done
+    jne .check_checksum_display
 
     lea rdi, [rel insp_sec_sel]
     mov esi, INSPECTOR_X
@@ -2139,8 +2191,266 @@ render_selection_inspector:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
+.check_checksum_display:
+    cmp dword [rel last_checksum_valid], 1
+    jne .rsi_done
+
+    mov r14d, 328
+    cmp dword [rel has_selection], 1
+    jne .draw_checksum_block
+    mov r14d, 390
+
+.draw_checksum_block:
+    ; Section Header: ── CHECKSUMS (F12) ──
+    lea rdi, [rel insp_sec_hash]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_INSP_TITLE
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; CRC-32 Label
+    add r14d, 18
+    lea rdi, [rel insp_crc_lbl]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; CRC-32 Value
+    lea rdi, [rel str_buf_1]
+    mov esi, [rel last_crc32]
+    call format_hex_dword
+
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X + 88
+    mov edx, r14d
+    mov ecx, COLOR_HEX_ASCII
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; SHA-256 Label
+    add r14d, 18
+    lea rdi, [rel insp_sha_lbl]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_INSP_LABEL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; First 32 hex characters
+    add r14d, 16
+    lea rsi, [rel last_sha256_hex]
+    lea rdi, [rel str_buf_1]
+    mov ecx, 32
+.cp_p1:
+    mov al, [rsi + rcx - 1]
+    mov [rdi + rcx - 1], al
+    dec ecx
+    jnz .cp_p1
+    mov byte [rel str_buf_1 + 32], 0
+
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_HEX_SPECIAL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    ; Second 32 hex characters
+    add r14d, 16
+    lea rsi, [rel last_sha256_hex + 32]
+    lea rdi, [rel str_buf_1]
+    mov ecx, 32
+.cp_p2:
+    mov al, [rsi + rcx - 1]
+    mov [rdi + rcx - 1], al
+    dec ecx
+    jnz .cp_p2
+    mov byte [rel str_buf_1 + 32], 0
+
+    lea rdi, [rel str_buf_1]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_HEX_SPECIAL
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
 .rsi_done:
     add rsp, 8
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
+; editor_compute_selection_checksum:
+; Calculates CRC32 and SHA256 over current selection (or whole file if no selection)
+; ------------------------------------------------------------------------------
+global editor_compute_selection_checksum
+editor_compute_selection_checksum:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 8                        ; 16-byte stack alignment
+
+    ; 1. Check if file is open / size > 0
+    mov r14, [rel file_size]
+    test r14, r14
+    jz .calc_empty
+    mov rax, [rel file_ptr]
+    test rax, rax
+    jz .calc_empty
+
+    ; 2. Determine target range
+    cmp dword [rel has_selection], 1
+    jne .use_whole_file
+
+    mov r12, [rel sel_start]
+    mov r13, [rel sel_end]
+    cmp r12, r13
+    jle .range_ordered
+    xchg r12, r13
+.range_ordered:
+    cmp r12, r14
+    jae .calc_empty
+    cmp r13, r14
+    jb .end_in_range
+    mov r13, r14
+    dec r13
+.end_in_range:
+    mov rbx, r13
+    sub rbx, r12
+    inc rbx                           ; rbx = length
+    jmp .do_calc
+
+.use_whole_file:
+    xor r12, r12                      ; offset = 0
+    mov rbx, r14                      ; length = file_size
+
+.do_calc:
+    mov [rel last_checksum_off], r12
+    mov [rel last_checksum_len], rbx
+
+    ; Data pointer: [file_ptr] + r12
+    mov rax, [rel file_ptr]
+    lea rdi, [rax + r12]
+    mov rsi, rbx
+
+    ; Compute CRC32
+    push rdi
+    push rsi
+    call compute_crc32
+    mov [rel last_crc32], eax
+    pop rsi
+    pop rdi
+
+    ; Compute SHA256
+    lea rdx, [rel last_sha256_digest]
+    call compute_sha256
+
+    ; Format SHA256 hex string
+    lea rdi, [rel last_sha256_digest]
+    lea rsi, [rel last_sha256_hex]
+    call format_sha256_hex
+
+    mov dword [rel last_checksum_valid], 1
+
+    ; Format Status Bar text: "CRC32: 0xXXXXXXXX | SHA256: <64-hex>"
+    lea rdi, [rel status_hash_buf]
+    mov byte [rdi + 0], 'C'
+    mov byte [rdi + 1], 'R'
+    mov byte [rdi + 2], 'C'
+    mov byte [rdi + 3], '3'
+    mov byte [rdi + 4], '2'
+    mov byte [rdi + 5], ':'
+    mov byte [rdi + 6], ' '
+    mov byte [rdi + 7], '0'
+    mov byte [rdi + 8], 'x'
+
+    lea rdi, [rel status_hash_buf + 9]
+    mov esi, [rel last_crc32]
+    call format_hex_dword
+
+    lea rdi, [rel status_hash_buf + 17]
+    mov byte [rdi + 0], ' '
+    mov byte [rdi + 1], '|'
+    mov byte [rdi + 2], ' '
+    mov byte [rdi + 3], 'S'
+    mov byte [rdi + 4], 'H'
+    mov byte [rdi + 5], 'A'
+    mov byte [rdi + 6], '2'
+    mov byte [rdi + 7], '5'
+    mov byte [rdi + 8], '6'
+    mov byte [rdi + 9], ':'
+    mov byte [rdi + 10], ' '
+
+    lea rsi, [rel last_sha256_hex]
+    lea rdi, [rel status_hash_buf + 28]
+    mov ecx, 65
+.cpy_sha_stat:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz .cpy_sha_stat
+
+    ; Display in status line
+    lea rdi, [rel status_hash_buf]
+    mov esi, COLOR_HEX_ASCII
+    call editor_set_status
+
+    ; Log to stdout
+    lea rdi, [rel fmt_checksum_log]
+    mov rsi, [rel last_checksum_off]
+    mov rdx, [rel last_checksum_off]
+    add rdx, [rel last_checksum_len]
+    dec rdx                           ; end offset
+    mov rcx, [rel last_checksum_len]
+    mov r8d, [rel last_crc32]
+    lea r9, [rel last_sha256_hex]
+    xor eax, eax
+    call printf wrt ..plt
+    jmp .calc_done
+
+.calc_empty:
+    mov dword [rel last_checksum_valid], 1
+    mov dword [rel last_crc32], 0
+    mov qword [rel last_checksum_off], 0
+    mov qword [rel last_checksum_len], 0
+
+    lea rsi, [rel empty_sha256_str]
+    lea rdi, [rel last_sha256_hex]
+    mov ecx, 65
+.cpy_empty_sha:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz .cpy_empty_sha
+
+    lea rdi, [rel status_hash_empty]
+    mov esi, COLOR_HEX_SPECIAL
+    call editor_set_status
+
+    lea rdi, [rel fmt_checksum_empty]
+    xor eax, eax
+    call printf wrt ..plt
+
+.calc_done:
+    add rsp, 8
+    pop r15
+    pop r14
     pop r13
     pop r12
     pop rbx
@@ -2927,11 +3237,17 @@ editor_render:
     ; Render Selection stats in inspector (if selection active)
     call render_selection_inspector
 
-    ; Shortcuts Cheat Sheet (starts at 330 if no selection, or 392 if selection active)
+    ; Shortcuts Cheat Sheet start Y coordinate
     mov r14d, 330
     cmp dword [rel has_selection], 1
+    jne .chk_cs_start
+    mov r14d, 390
+
+.chk_cs_start:
+    cmp dword [rel last_checksum_valid], 1
     jne .shortcuts_start
-    mov r14d, 392
+    add r14d, 90                      ; Shift down for checksums block
+
 .shortcuts_start:
     lea rdi, [rel insp_sec_help]
     mov esi, INSPECTOR_X
@@ -2940,7 +3256,15 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 20
+    add r14d, 18
+    lea rdi, [rel insp_h10]
+    mov esi, INSPECTOR_X
+    mov edx, r14d
+    mov ecx, COLOR_HEX_ASCII
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, 16
     lea rdi, [rel insp_h1]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2948,7 +3272,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h2]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2956,7 +3280,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h3]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2964,7 +3288,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h4]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2972,7 +3296,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h5]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2980,7 +3304,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h6]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2988,7 +3312,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h7]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -2996,7 +3320,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h8]
     mov esi, INSPECTOR_X
     mov edx, r14d
@@ -3004,7 +3328,7 @@ editor_render:
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 18
+    add r14d, 16
     lea rdi, [rel insp_h9]
     mov esi, INSPECTOR_X
     mov edx, r14d

@@ -102,6 +102,9 @@ XK_Page_Up          equ 0xFF55
 XK_Page_Down        equ 0xFF56
 XK_End              equ 0xFF57
 XK_Delete           equ 0xFFFF
+XK_F3               equ 0xFFBE
+XK_F11              equ 0xFFC8
+XK_F12              equ 0xFFC9
 
 ; X11 Event Types
 KeyPress            equ 2

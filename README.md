@@ -48,17 +48,24 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
      - **Integers (Little-Endian)**: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `uint64`
      - **File Statistics**: File size (human readable), cursor percentage, mode
 
-6. **Interactive Editing & Multi-Level Undo**:
+6. **Selection Cryptographic Checksums (CRC-32 & SHA-256)**:
+   - Pure assembly implementations of standard **IEEE 802.3 CRC-32** and **FIPS 180-4 SHA-256**.
+   - Press **`F12`** on any highlighted range to instantaneously compute both checksums.
+   - Displayed simultaneously in the bottom status line (`CRC32: 0xXXXXXXXX | SHA256: <64-hex>`), inside the side Inspector panel, and logged cleanly to stdout.
+   - If no selection is active, `F12` falls back to calculating checksums across the entire file.
+
+7. **Interactive Editing & Multi-Level Undo**:
    - Dual-pane editing: switch effortlessly between **HEX** and **ASCII** panes with `Tab` or `Space`.
    - In-place nibble editing (upper nibble followed by lower nibble, with automatic advance).
    - Multi-level **Undo Stack (`Ctrl+Z`)** (up to 4,096 modification levels).
    - **Modified Byte Highlighting**: every edited byte glows in vivid Coral Red (`#F38BA8`).
    - `Ctrl+S` commits modifications directly to disk via `msync`.
 
-7. **Modal Command Navigation**:
+8. **Modal Command Navigation**:
    - **Goto Offset (`Ctrl+G`)**: Instant jump to any hex (`0x...`) or decimal file offset.
    - **Find Pattern (`Ctrl+F` / `F3`)**: Sub-millisecond forward and wrapped search for ASCII strings or byte sequences.
-   - **Instant Screenshot (`F12`)**: Saves lossless 24-bit PPM/PNG screenshots directly from framebuffer.
+   - **Range Checksums (`F12`)**: Immediate CRC-32 & SHA-256 hash calculation over active selection.
+   - **Instant Screenshot (`F11`)**: Saves lossless 24-bit PPM screenshots directly from framebuffer.
 
 ---
 
@@ -84,7 +91,8 @@ It is engineered from scratch for **blistering speed**, **zero perceptible laten
 | `Ctrl + G` | Open **Goto Offset** modal input bar |
 | `Ctrl + F` | Open **Find Pattern** search bar |
 | `F3` | Find next occurrence of active search pattern |
-| `F12` | Capture instant framebuffer screenshot (`asmhex_screenshot.ppm`) |
+| `F11` | Capture instant framebuffer screenshot (`asmhex_screenshot.ppm`) |
+| `F12` | Calculate and display CRC-32 & SHA-256 for active selection |
 | `Ctrl + Q` / `Esc` | Quit application |
 
 ---
@@ -100,14 +108,16 @@ asmhex/
 │   ├── main.asm            # Application entry, CLI argument parser, X11 event loop
 │   ├── renderer.asm        # SSE SIMD pixel blitter, font renderer, LUTs, PPM screenshot
 │   ├── editor.asm          # Navigation, hex/ascii editing, undo engine, search, inspector
+│   ├── hash.asm            # Pure assembly IEEE 802.3 CRC-32 & FIPS 180-4 SHA-256 algorithms
 │   ├── file_io.asm         # Direct Linux 64-bit syscalls (mmap, munmap, msync, open, close)
 │   ├── x11_shm.asm         # X11 display, window management, zero-copy MIT-SHM pipeline
 │   └── include/
 │       ├── constants.inc   # Colors, KeySyms, struct layouts, layout dimensions
 │       └── macros.inc      # Fast assembly macros & syscall helpers
 └── tests/
-    ├── test_suite.c        # Automated 14-point unit & integration test runner
-    └── test_benchmark.c    # Render throughput & CPU cycle benchmark
+    ├── test_suite.c        # Automated 15-point unit & integration test runner
+    ├── test_benchmark.c    # Render throughput & CPU cycle benchmark
+    └── test_f12_screenshot.c # F12 selection checksum demo verification
 ```
 
 ---

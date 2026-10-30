@@ -55,12 +55,24 @@ extern void editor_undo(void);
 extern void editor_search_next(void);
 extern int dump_screenshot(const char *filename);
 
+extern void init_crc32_table(void);
+extern uint32_t compute_crc32(const uint8_t *data, uint64_t len);
+extern void compute_sha256(const uint8_t *data, uint64_t len, uint8_t *digest_out);
+extern void format_sha256_hex(const uint8_t *digest_in, char *hex_out);
+extern void editor_compute_selection_checksum(void);
+extern uint32_t last_checksum_valid;
+extern uint32_t last_crc32;
+extern char last_sha256_hex[68];
+extern uint64_t last_checksum_off;
+extern uint64_t last_checksum_len;
+
 int main() {
     printf("========================================================\n");
     printf("  Running AsmHex Comprehensive Test Suite...\n");
     printf("========================================================\n");
 
     init_renderer_luts();
+    init_crc32_table();
 
     // Test 1: Scratch buffer creation
     printf("[TEST 1] Testing scratch buffer creation...\n");
@@ -342,8 +354,86 @@ int main() {
     free(nib_fb);
     file_close();
 
+    // Test 15: F12 Selection SHA-256 and CRC-32 Checksums
+    printf("[TEST 15] Testing F12 Selection SHA-256 and CRC-32 Checksum Engine...\n");
+    // 15a: Verify pure assembly CRC32 test vector
+    const char *test_crc_str = "123456789";
+    uint32_t c1 = compute_crc32((const uint8_t*)test_crc_str, strlen(test_crc_str));
+    assert(c1 == 0xCBF43926);
+    printf("  -> CRC32 standard test vector (0xCBF43926) matched bit-for-bit.\n");
+
+    // 15b: Verify pure assembly SHA-256 test vectors
+    uint8_t d_empty[32];
+    char hex_empty[65];
+    compute_sha256((const uint8_t*)"", 0, d_empty);
+    format_sha256_hex(d_empty, hex_empty);
+    assert(strcmp(hex_empty, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == 0);
+
+    const char *test_sha_str = "Fast AsmHex SHA256 test string for Intel SSE4.2 / SHA Extensions verification!";
+    uint8_t d_test[32];
+    char hex_test[65];
+    compute_sha256((const uint8_t*)test_sha_str, strlen(test_sha_str), d_test);
+    format_sha256_hex(d_test, hex_test);
+    assert(strcmp(hex_test, "d01cd276c9868f08d117bb44c16ab29a6f68ca2d3027cf86881ba45c69a80459") == 0);
+
+    // NIST standard test vector "abc"
+    uint8_t d_abc[32];
+    char hex_abc[65];
+    compute_sha256((const uint8_t*)"abc", 3, d_abc);
+    format_sha256_hex(d_abc, hex_abc);
+    assert(strcmp(hex_abc, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0);
+    printf("  -> SHA-256 standard test vectors (NIST empty, 'abc', & string) matched bit-for-bit.\n");
+
+    // 15c: Verify F12 hotkey on active selection in editor
+    file_create_scratch();
+    editor_init();
+    for (int i = 0; i < 256; i++) {
+        file_ptr[i] = (uint8_t)(i ^ 0x5A);
+    }
+    // Select range 0x40..0x7F (64 bytes: 64 to 127)
+    has_selection = 1;
+    sel_start = 64;
+    sel_end = 127;
+    assert(last_checksum_valid == 0);
+
+    // Press F12
+    editor_handle_key(XK_F12, NULL, 0, 0);
+    assert(last_checksum_valid == 1);
+    assert(last_checksum_off == 64);
+    assert(last_checksum_len == 64);
+
+    uint32_t exp_crc = compute_crc32(file_ptr + 64, 64);
+    uint8_t exp_sha_d[32];
+    char exp_sha_h[65];
+    compute_sha256(file_ptr + 64, 64, exp_sha_d);
+    format_sha256_hex(exp_sha_d, exp_sha_h);
+
+    assert(last_crc32 == exp_crc);
+    assert(strcmp(last_sha256_hex, exp_sha_h) == 0);
+    printf("  -> F12 key press computed selection CRC32 (0x%08X) and SHA-256 (%s) bit-exact.\n",
+           last_crc32, last_sha256_hex);
+
+    // 15d: Whole file fallback when no selection
+    has_selection = 0;
+    editor_handle_key(XK_F12, NULL, 0, 0);
+    assert(last_checksum_valid == 1);
+    assert(last_checksum_off == 0);
+    assert(last_checksum_len == file_size);
+    printf("  -> F12 whole-file fallback verified: computed over all %lu bytes.\n", file_size);
+
+    // 15e: Modification invalidates stale checksums
+    char key_char[1] = {'A'};
+    cursor_offset = 0;
+    active_pane = 0;
+    nibble_index = 0;
+    editor_handle_key('a', key_char, 1, 0);
+    assert(last_checksum_valid == 0);
+    printf("  -> Stale checksum invalidation upon byte edit verified.\n");
+
+    file_close();
+
     printf("\n========================================================\n");
-    printf("  ALL 14 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 15 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }
