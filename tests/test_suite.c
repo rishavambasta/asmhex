@@ -102,6 +102,28 @@ extern void format_hex_qword(char *dst, uint64_t val);
 extern void format_hex_dword(char *dst, uint32_t val);
 extern uint16_t hex_lut[256];
 
+extern int file_save_as(const char *path);
+extern int32_t font_scale;
+extern int32_t cur_offset_x;
+extern int32_t cur_gutter_sep_x;
+extern int32_t cur_hex_start_x;
+extern int32_t cur_byte_spacing;
+extern int32_t cur_group_gap;
+extern int32_t cur_hex_end_x;
+extern int32_t cur_ascii_sep_x;
+extern int32_t cur_ascii_start_x;
+extern int32_t cur_ascii_end_x;
+extern int32_t cur_char_w;
+extern int32_t row_h;
+extern void editor_zoom_in(void);
+extern void editor_zoom_out(void);
+extern void editor_zoom_reset(void);
+extern void editor_start_save_as(void);
+extern void editor_commit_save_as(void);
+extern void editor_prompt_confirm_quit(void);
+extern char input_buf[128];
+extern uint32_t input_len;
+
 int main() {
     printf("========================================================\n");
     printf("  Running AsmHex Comprehensive Test Suite...\n");
@@ -287,24 +309,24 @@ int main() {
     assert(is_selecting == 0);
 
     // Left click at Hex pane row 0, col 0 (offset 0):
-    // x = HEX_START_X (164), y = SEPARATOR_Y + 10 (62)
-    editor_handle_click(164, 62);
+    // x = HEX_START_X (100), y = SEPARATOR_Y + 10 (62)
+    editor_handle_click(100, 62);
     assert(is_selecting == 1);
     assert(has_selection == 0);
     assert(sel_start == 0);
     assert(cursor_offset == 0);
 
     // Drag mouse to row 2, col 4:
-    // row 2: y = 56 + 2 * 16 = 88. col 4: x = 164 + 4 * 24 = 260.
+    // row 2: y = 56 + 2 * 16 = 88. col 4: x = 100 + 4 * 24 = 196.
     // target offset = 2 * 16 + 4 = 36
-    editor_handle_mouse_move(260, 88);
+    editor_handle_mouse_move(196, 88);
     assert(has_selection == 1);
     assert(sel_start == 0);
     assert(sel_end == 36);
     assert(cursor_offset == 36);
 
     // Release mouse button:
-    editor_handle_button_release(260, 88);
+    editor_handle_button_release(196, 88);
     assert(is_selecting == 0);
     assert(has_selection == 1);
     assert(sel_start == 0);
@@ -312,8 +334,8 @@ int main() {
     printf("  -> Drag selection verified: selected bytes 0x0000..0x%04X (37 bytes).\n", (int)sel_end);
 
     // Test single click deselects
-    editor_handle_click(164 + 24, 62); // click byte 1
-    editor_handle_button_release(164 + 24, 62);
+    editor_handle_click(100 + 24, 62); // click byte 1
+    editor_handle_button_release(100 + 24, 62);
     assert(has_selection == 0);
     assert(cursor_offset == 1);
     printf("  -> Single click deselect verified: selection cleared, cursor placed at 0x0001.\n");
@@ -372,12 +394,12 @@ int main() {
     cursor_offset = 10; // move cursor away from byte 0 so byte 0 has standard background
     editor_render();
 
-    // High nibble glyph 'A' is at x = 164, y = 58
-    // Low nibble glyph '5' is at x = 172, y = 58
+    // High nibble glyph 'A' is at x = 100, y = 58
+    // Low nibble glyph '5' is at x = 108, y = 58
     // Verify that low nibble pixel has foreground text color (not non-printable blank or control char)
     uint32_t fg_pix_count = 0;
     for (int y = 58; y < 74; y++) {
-        for (int x = 172; x < 180; x++) {
+        for (int x = 108; x < 116; x++) {
             if (nib_fb[y * 1040 + x] != 0x001E1E2E) {
                 fg_pix_count++;
             }
@@ -1043,8 +1065,221 @@ int main() {
     file_close();
     remove(drop_test_file);
 
+    // =========================================================================
+    // Test 26: Save As Functionality (file_save_as & MODE_SAVE_AS)
+    // =========================================================================
+    printf("\n[TEST 26] Testing Save As functionality (file_save_as & MODE_SAVE_AS)...\n");
+    const char *save_as_path = "/tmp/asmhex_save_as_target.bin";
+    remove(save_as_path);
+
+    // 1. Create a blank file and write data into it
+    assert(file_create_blank() == 0);
+    const char *sa_test_msg = "AsmHexSaveAsTestContent";
+    int sa_msg_len = (int)strlen(sa_test_msg);
+    memcpy(file_ptr, sa_test_msg, sa_msg_len);
+    file_size = sa_msg_len;
+    is_dirty = 1;
+
+    // 2. Invoke Save As modal
+    editor_start_save_as();
+    assert(editor_mode == 3); // MODE_SAVE_AS
+    assert(input_len > 0); // prefilled with untitled.bin
+
+    // 3. User types new file path into input_buf
+    strncpy(input_buf, save_as_path, sizeof(input_buf) - 1);
+    input_buf[sizeof(input_buf) - 1] = '\0';
+    input_len = (uint32_t)strlen(input_buf);
+
+    // 4. Commit Save As
+    editor_commit_save_as();
+    assert(editor_mode == 0); // MODE_NORMAL
+    assert(is_dirty == 0);
+    assert(is_scratch == 0);
+    assert(strcmp(file_path, save_as_path) == 0);
+
+    // 5. Verify saved file on disk
+    FILE *safp = fopen(save_as_path, "rb");
+    assert(safp != NULL);
+    char sa_read_back[64] = {0};
+    size_t nread = fread(sa_read_back, 1, sizeof(sa_read_back) - 1, safp);
+    fclose(safp);
+    assert((int)nread == sa_msg_len);
+    assert(memcmp(sa_read_back, sa_test_msg, sa_msg_len) == 0);
+    printf("  -> Verified Save As successfully wrote %d bytes to '%s' with exact matching content.\n", sa_msg_len, save_as_path);
+
+    file_close();
+    remove(save_as_path);
+
+    // =========================================================================
+    // Test 27: 32-bit (4-byte) Addresses & 4 GiB Limit Enforcement
+    // =========================================================================
+    printf("\n[TEST 27] Testing 32-bit (4-byte) addresses and 4 GiB size enforcement...\n");
+    char hex_dword_buf[16] = {0};
+    format_hex_dword(hex_dword_buf, 0x12345678);
+    assert(strcmp(hex_dword_buf, "12345678") == 0);
+    assert(strlen(hex_dword_buf) == 8);
+    printf("  -> Verified format_hex_dword produced 8 hex characters: '%s'.\n", hex_dword_buf);
+
+    // Verify 32-bit offset layout geometry
+    editor_init();
+    assert(cur_offset_x == 16);
+    assert(cur_gutter_sep_x == 88);
+    assert(cur_hex_start_x == 100);
+
+    // Verify 4 GiB limit rejection in file_ensure_capacity
+    file_create_scratch();
+    int cap_err = file_ensure_capacity(0x100000001ULL); // 4 GiB + 1
+    assert(cap_err < 0);
+    file_close();
+    printf("  -> Verified 4 GiB capacity ceiling rejects allocations > 4 GiB (code %d).\n", cap_err);
+
+    // =========================================================================
+    // Test 28: Text Scaling (Ctrl + / Ctrl -) & Dynamic Layout Engine
+    // =========================================================================
+    printf("\n[TEST 28] Testing Text Scaling (Ctrl + / Ctrl -) & Dynamic Layout...\n");
+    editor_init();
+    assert(font_scale == 1);
+    assert(cur_char_w == 8 && row_h == 16);
+    assert(cur_hex_start_x == 100 && cur_byte_spacing == 24);
+
+    // Zoom In
+    editor_zoom_in();
+    assert(font_scale == 2);
+    assert(cur_char_w == 16 && row_h == 32);
+    assert(cur_offset_x == 32);
+    assert(cur_gutter_sep_x == 176);
+    assert(cur_hex_start_x == 200);
+    assert(cur_byte_spacing == 48);
+    assert(cur_group_gap == 24);
+    assert(cur_hex_end_x == 976);
+    assert(cur_ascii_sep_x == 1000);
+    assert(cur_ascii_start_x == 1032);
+    assert(cur_ascii_end_x == 1288);
+    printf("  -> Verified editor_zoom_in() scaled font to 2x (16x32) and updated all layout coordinates.\n");
+
+    // Zoom In again (must clamp at max scale 2)
+    editor_zoom_in();
+    assert(font_scale == 2);
+
+    // Test 2x Rendering with Double-Scanline SSE2 Blitter
+    file_create_scratch();
+    file_ptr[0] = 0x55;
+    uint32_t *scale_fb = malloc(1920 * 1080 * 4);
+    assert(scale_fb != NULL);
+    fb_data = scale_fb;
+    win_w = 1920;
+    win_h = 1080;
+    fb_pitch = 1920 * 4;
+    editor_render();
+    // Verify that at row 0 (y = 56 + 6 = 62), glyph spans 32 scanlines (up to y = 93)
+    uint32_t scale_pix_count = 0;
+    for (int y = 62; y < 94; y++) {
+        for (int x = 200; x < 232; x++) {
+            if (scale_fb[y * 1920 + x] != 0x001E1E2E) {
+                scale_pix_count++;
+            }
+        }
+    }
+    assert(scale_pix_count > 60);
+    printf("  -> Verified 2x rendering: 16x32 double-scanline blit verified (%u active pixels).\n", scale_pix_count);
+    free(scale_fb);
+    file_close();
+
+    // Zoom Out
+    editor_zoom_out();
+    assert(font_scale == 1);
+    assert(cur_char_w == 8 && row_h == 16);
+    assert(cur_hex_start_x == 100 && cur_byte_spacing == 24);
+    printf("  -> Verified editor_zoom_out() scaled font back to 1x (8x16).\n");
+
+    // Zoom Out again (must clamp at min scale 1)
+    editor_zoom_out();
+    assert(font_scale == 1);
+
+    // Verify keyboard hotkey dispatch for text zoom:
+    // Ctrl + (XK_plus with state 4) -> font_scale 2
+    editor_handle_key(XK_plus, "+", 1, 4);
+    assert(font_scale == 2);
+    // Ctrl - (XK_minus with state 4) -> font_scale 1
+    editor_handle_key(XK_minus, "-", 1, 4);
+    assert(font_scale == 1);
+    // Ctrl = (XK_equal with state 4) -> font_scale 2
+    editor_handle_key(XK_equal, "=", 1, 4);
+    assert(font_scale == 2);
+    // Ctrl 0 (reset) -> font_scale 1
+    editor_handle_key('0', "0", 1, 4);
+    assert(font_scale == 1);
+    printf("  -> Verified Ctrl+ / Ctrl- / Ctrl= / Ctrl 0 keyboard shortcuts.\n");
+
+    // =========================================================================
+    // Test 29: Unsaved Changes Quit Warning Modal (Ctrl+Q & Window Close)
+    // =========================================================================
+    printf("\n[TEST 29] Testing Unsaved Changes Quit Warning Modal...\n");
+    assert(file_create_blank() == 0);
+    editor_init();
+    assert(is_dirty == 0);
+
+    // Case 1: When file is clean, Ctrl+Q quits immediately (returns 1)
+    int q_ret = editor_handle_key('q', "q", 1, 4); // Ctrl+Q
+    assert(q_ret == 1);
+    assert(editor_mode == 0);
+    printf("  -> Clean file: Ctrl+Q quits immediately (return code 1).\n");
+
+    // Case 2: When file has unsaved changes (is_dirty == 1), Ctrl+Q warns (returns 0, MODE_CONFIRM_QUIT)
+    is_dirty = 1;
+    q_ret = editor_handle_key('q', "q", 1, 4); // Ctrl+Q
+    assert(q_ret == 0);
+    assert(editor_mode == 4); // MODE_CONFIRM_QUIT
+    printf("  -> Unsaved changes: Ctrl+Q intercepts quit and activates MODE_CONFIRM_QUIT warning modal.\n");
+
+    // Case 3: Cancel quit prompt with 'Esc'
+    int c_ret = editor_handle_key(XK_Escape, "", 0, 0);
+    assert(c_ret == 0);
+    assert(editor_mode == 0); // returns to MODE_NORMAL
+    assert(is_dirty == 1);    // file still dirty
+    printf("  -> Pressing Esc cancels quit prompt and returns to editing.\n");
+
+    // Case 4: Discard changes with 'n'
+    editor_handle_key('q', "q", 1, 4);
+    assert(editor_mode == 4);
+    int n_ret = editor_handle_key('n', "n", 1, 0); // 'n' to discard
+    assert(n_ret == 1); // quits discarding changes
+    printf("  -> Pressing 'n' discards changes and confirms quit (return code 1).\n");
+
+    // Case 5: Save and quit with 'y'
+    file_close();
+    const char *save_quit_path = "/tmp/asmhex_save_quit.dat";
+    FILE *sqfp = fopen(save_quit_path, "wb");
+    assert(sqfp != NULL);
+    fputs("InitialData", sqfp);
+    fclose(sqfp);
+
+    assert(file_open(save_quit_path) == 0);
+    editor_init();
+    file_ptr[0] = 'X'; // modify
+    is_dirty = 1;
+
+    editor_handle_key('q', "q", 1, 4); // Ctrl+Q
+    assert(editor_mode == 4);
+    int y_ret = editor_handle_key('y', "y", 1, 0); // 'y' to save & quit
+    assert(y_ret == 1); // saved & quit
+    assert(is_dirty == 0);
+
+    // Verify on disk
+    sqfp = fopen(save_quit_path, "rb");
+    assert(sqfp != NULL);
+    char sq_buf[16] = {0};
+    size_t sq_n = fread(sq_buf, 1, sizeof(sq_buf) - 1, sqfp);
+    assert(sq_n > 0);
+    fclose(sqfp);
+    assert(sq_buf[0] == 'X');
+    printf("  -> Pressing 'y' saved changes to disk and confirmed quit (return code 1).\n");
+
+    file_close();
+    remove(save_quit_path);
+
     printf("\n========================================================\n");
-    printf("  ALL 25 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 29 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

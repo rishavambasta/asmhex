@@ -22,18 +22,22 @@ SCROLLBAR_X         equ 722
 SCROLLBAR_W         equ 10
 SCROLL_THUMB_MIN_H  equ 24
 
-; Column X Coordinates
+; Column X Coordinates (32-bit offset layout)
 OFFSET_X            equ 16
-GUTTER_SEP_X        equ 152
-HEX_START_X         equ 164
+GUTTER_SEP_X        equ 88
+HEX_START_X         equ 100
 BYTE_SPACING        equ 24       ; 2 hex chars (16px) + 8px gap
 GROUP_GAP           equ 12       ; Extra spacing between 8-byte groups
-HEX_END_X           equ 564
-ASCII_SEP_X         equ 576
-ASCII_START_X       equ 592
+HEX_END_X           equ 488
+ASCII_SEP_X         equ 500
+ASCII_START_X       equ 516
+ASCII_END_X         equ 644
 DATA_PANE_W         equ 734
 PANEL_DIVIDER_X     equ 736
 INSPECTOR_X         equ 748
+
+; File Limits
+MAX_FILE_SIZE       equ 0xFFFFFFFF   ; 4 GiB limit (32-bit address space)
 
 ; Modern Dark Theme Color Palette (32-bit ARGB 0x00RRGGBB)
 COLOR_BG            equ 0x001E1E2E   ; Catppuccin Base
@@ -95,6 +99,8 @@ COLOR_DIFF_MATCH    equ 0x00A6E3A1   ; Mint Green for matching status
 MODE_NORMAL         equ 0
 MODE_GOTO           equ 1
 MODE_SEARCH         equ 2
+MODE_SAVE_AS        equ 3
+MODE_CONFIRM_QUIT   equ 4
 
 ; Active Panes
 PANE_HEX            equ 0
@@ -121,6 +127,9 @@ XK_F7               equ 0xFFC4
 XK_F8               equ 0xFFC5
 XK_F11              equ 0xFFC8
 XK_F12              equ 0xFFC9
+XK_KP_Add           equ 0xFFAB
+XK_KP_Subtract      equ 0xFFAD
+XK_KP_0             equ 0xFFB0
 
 ; X11 Modifier Masks
 ShiftMask           equ (1 << 0)

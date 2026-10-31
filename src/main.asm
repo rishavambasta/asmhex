@@ -65,9 +65,10 @@ extern editor_handle_mouse_move
 extern editor_handle_button_release
 extern editor_handle_wheel
 extern editor_set_status
+extern editor_prompt_confirm_quit
 
 section .data
-    app_title:     db "AsmHex v1.1.0 - Pure x86_64 Assembly Hex Editor", 0
+    app_title:     db "AsmHex v1.2.0 - Pure x86_64 Assembly Hex Editor", 0
     err_disp_msg:  db "Error: Failed to connect to X11 display (check DISPLAY env var).", 0
     err_file_msg:  db "Notice: Could not open file; loaded blank buffer for writing.", 0
     arg_screenshot: db "--screenshot", 0
@@ -76,7 +77,7 @@ section .data
     diff_banner:    db "[AsmHex] Diff Mode active: Comparing 2 files.", 10, 0
     banner_console:
         db "================================================================", 10
-        db "  AsmHex v1.1.0 - Graphical Hex Editor in Pure x86_64 Assembly  ", 10
+        db "  AsmHex v1.2.0 - Graphical Hex Editor in Pure x86_64 Assembly  ", 10
         db "  Hardware: Intel Celeron UHD GPU / SSE4.2 Accelerated          ", 10
         db "================================================================", 10, 0
 
@@ -303,7 +304,15 @@ main:
     ; Check if message matches WM_DELETE_WINDOW atom (at data.l[0], offset 56)
     mov rax, [rel event_buf + 56]
     cmp rax, [rel wm_del_atom]
+    jne .check_xdnd_messages
+    cmp dword [rel is_dirty], 0
     je .exit_loop
+    call editor_prompt_confirm_quit
+    call editor_render
+    call x11_flush
+    jmp .event_loop
+
+.check_xdnd_messages:
 
     ; Check XDnD Protocol messages (message_type is at offset 40)
     mov rax, [rel event_buf + 40]

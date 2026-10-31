@@ -18,6 +18,11 @@ section .rodata
     hex_chars_l: db "0123456789abcdef"
     ppm_fmt:     db "P6", 10, "%d %d", 10, "255", 10, 0
 
+section .data
+    align 4
+    global font_scale
+    font_scale:    dd 1               ; Text zoom/scaling factor (1 = 100% 8x16, 2 = 200% 16x32)
+
 section .bss
     global hex_lut
     global bin_lut
@@ -368,13 +373,18 @@ draw_rect_alpha:
 global draw_glyph
 draw_glyph:
     ; Bounds check
-    mov eax, [rel win_w]
-    sub eax, 8
-    cmp edi, eax
+    mov eax, [rel font_scale]
+    shl eax, 3                        ; char_w = font_scale * 8
+    mov r10d, [rel win_w]
+    sub r10d, eax
+    cmp edi, r10d
     jg .glyph_done
-    mov eax, [rel win_h]
-    sub eax, 16
-    cmp esi, eax
+
+    mov eax, [rel font_scale]
+    shl eax, 4                        ; char_h = font_scale * 16
+    mov r10d, [rel win_h]
+    sub r10d, eax
+    cmp esi, r10d
     jg .glyph_done
 
     mov r9, [rel fb_data]
@@ -396,6 +406,80 @@ draw_glyph:
     lea rax, [rel font_bitmap]
     add rax, rdx                      ; rax = font glyph address
 
+    cmp dword [rel font_scale], 1
+    jle .scanline_loop_1x
+
+    ; 2x Font Blitter (16x32)
+    mov edx, 16                       ; 16 font scanlines
+    mov rsi, [rel fb_pitch]
+.s2_loop:
+    movzx r11d, byte [rax]            ; 8 bits of font scanline
+    inc rax
+
+    test r11b, 0x80
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 0], r10d
+    mov [r9 + 4], r10d
+
+    test r11b, 0x40
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 8], r10d
+    mov [r9 + 12], r10d
+
+    test r11b, 0x20
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 16], r10d
+    mov [r9 + 20], r10d
+
+    test r11b, 0x10
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 24], r10d
+    mov [r9 + 28], r10d
+
+    test r11b, 0x08
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 32], r10d
+    mov [r9 + 36], r10d
+
+    test r11b, 0x04
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 40], r10d
+    mov [r9 + 44], r10d
+
+    test r11b, 0x02
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 48], r10d
+    mov [r9 + 52], r10d
+
+    test r11b, 0x01
+    mov r10d, r8d
+    cmovnz r10d, ecx
+    mov [r9 + 56], r10d
+    mov [r9 + 60], r10d
+
+    ; Duplicate 64 bytes (16 pixels) to row 2 using SSE2 movdqu
+    movdqu xmm0, [r9]
+    movdqu xmm1, [r9 + 16]
+    movdqu xmm2, [r9 + 32]
+    movdqu xmm3, [r9 + 48]
+    movdqu [r9 + rsi], xmm0
+    movdqu [r9 + rsi + 16], xmm1
+    movdqu [r9 + rsi + 32], xmm2
+    movdqu [r9 + rsi + 48], xmm3
+
+    lea r9, [r9 + rsi * 2]
+    dec edx
+    jnz .s2_loop
+    ret
+
+.scanline_loop_1x:
     mov edx, 16                       ; 16 rows
 
 .scanline_loop:
@@ -459,13 +543,18 @@ draw_glyph:
 global draw_glyph_transparent
 draw_glyph_transparent:
     ; Bounds check
-    mov eax, [rel win_w]
-    sub eax, 8
-    cmp edi, eax
+    mov eax, [rel font_scale]
+    shl eax, 3                        ; char_w = font_scale * 8
+    mov r10d, [rel win_w]
+    sub r10d, eax
+    cmp edi, r10d
     jg .gt_done
-    mov eax, [rel win_h]
-    sub eax, 16
-    cmp esi, eax
+
+    mov eax, [rel font_scale]
+    shl eax, 4                        ; char_h = font_scale * 16
+    mov r10d, [rel win_h]
+    sub r10d, eax
+    cmp esi, r10d
     jg .gt_done
 
     mov r9, [rel fb_data]
@@ -487,6 +576,79 @@ draw_glyph_transparent:
     lea rax, [rel font_bitmap]
     add rax, rdx                      ; rax = font glyph address
 
+    cmp dword [rel font_scale], 1
+    jle .gt_scanline_loop_1x
+
+    ; 2x Transparent Blitter
+    mov edx, 16                       ; 16 rows
+    mov rsi, [rel fb_pitch]
+.gt_s2_loop:
+    movzx r11d, byte [rax]            ; 8 bits of font scanline
+    inc rax
+
+    test r11b, 0x80
+    jz .gt2_b6
+    mov [r9 + 0], ecx
+    mov [r9 + 4], ecx
+    mov [r9 + rsi + 0], ecx
+    mov [r9 + rsi + 4], ecx
+.gt2_b6:
+    test r11b, 0x40
+    jz .gt2_b5
+    mov [r9 + 8], ecx
+    mov [r9 + 12], ecx
+    mov [r9 + rsi + 8], ecx
+    mov [r9 + rsi + 12], ecx
+.gt2_b5:
+    test r11b, 0x20
+    jz .gt2_b4
+    mov [r9 + 16], ecx
+    mov [r9 + 20], ecx
+    mov [r9 + rsi + 16], ecx
+    mov [r9 + rsi + 20], ecx
+.gt2_b4:
+    test r11b, 0x10
+    jz .gt2_b3
+    mov [r9 + 24], ecx
+    mov [r9 + 28], ecx
+    mov [r9 + rsi + 24], ecx
+    mov [r9 + rsi + 28], ecx
+.gt2_b3:
+    test r11b, 0x08
+    jz .gt2_b2
+    mov [r9 + 32], ecx
+    mov [r9 + 36], ecx
+    mov [r9 + rsi + 32], ecx
+    mov [r9 + rsi + 36], ecx
+.gt2_b2:
+    test r11b, 0x04
+    jz .gt2_b1
+    mov [r9 + 40], ecx
+    mov [r9 + 44], ecx
+    mov [r9 + rsi + 40], ecx
+    mov [r9 + rsi + 44], ecx
+.gt2_b1:
+    test r11b, 0x02
+    jz .gt2_b0
+    mov [r9 + 48], ecx
+    mov [r9 + 52], ecx
+    mov [r9 + rsi + 48], ecx
+    mov [r9 + rsi + 52], ecx
+.gt2_b0:
+    test r11b, 0x01
+    jz .gt2_row_next
+    mov [r9 + 56], ecx
+    mov [r9 + 60], ecx
+    mov [r9 + rsi + 56], ecx
+    mov [r9 + rsi + 60], ecx
+
+.gt2_row_next:
+    lea r9, [r9 + rsi * 2]
+    dec edx
+    jnz .gt_s2_loop
+    ret
+
+.gt_scanline_loop_1x:
     mov edx, 16                       ; 16 rows
 
 .gt_scanline_loop:
@@ -564,7 +726,9 @@ draw_string:
     mov r8d, r15d
     call draw_glyph
 
-    add r13d, FONT_W
+    mov eax, [rel font_scale]
+    shl eax, 3                        ; 8 * font_scale
+    add r13d, eax
     inc r12
     cmp r13d, [rel win_w]
     jl .str_loop
@@ -611,7 +775,9 @@ draw_string_len:
     call draw_glyph
     pop rax
 
-    add r13d, FONT_W
+    mov eax, [rel font_scale]
+    shl eax, 3                        ; 8 * font_scale
+    add r13d, eax
     inc r12
     dec ebx
     cmp r13d, [rel win_w]

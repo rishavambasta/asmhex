@@ -18,7 +18,9 @@ extern is_readonly
 extern is_scratch
 extern file_path
 extern file_save
+extern file_save_as
 extern file_ensure_capacity
+extern font_scale
 
 extern file2_ptr
 extern file2_size
@@ -54,7 +56,7 @@ extern hex_lut
 extern bin_lut
 
 section .data
-    title_str:         db " AsmHex v1.1 ", 0
+    title_str:         db " AsmHex v1.2 ", 0
     sub_title:         db "Pure x86_64 Assembly Hex Editor", 0
     tag_mod:           db " [MODIFIED] ", 0
     tag_ro:            db " [READ-ONLY] ", 0
@@ -64,7 +66,7 @@ section .data
     status_shot_saved: db "Screenshot saved to asmhex_screenshot.ppm!", 0
     insp_eof_lbl:      db "[EOF / Append Mode]", 0
 
-    col_hdr_offset:    db "Offset (h)", 0
+    col_hdr_offset:    db "Offset", 0
     col_hdr_hex:       db "00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f", 0
     col_hdr_ascii:     db "Decoded text", 0
 
@@ -170,6 +172,36 @@ section .data
     prompt_goto_help:  db "[Enter] Jump to offset    [Esc] Cancel", 0
     prompt_find:       db "FIND (ASCII or \x Hex): ", 0
     prompt_find_help:  db "[Enter] Find Next    [Esc] Cancel", 0
+    prompt_save_as:    db "SAVE AS: ", 0
+    prompt_save_as_help: db "[Enter] Save As    [Esc] Cancel", 0
+    prompt_confirm_quit: db "UNSAVED CHANGES! Save before quitting?  [Y] Yes    [N] No (Discard)    [Esc] Cancel", 0
+    prompt_confirm_quit_help: db "Press Y to save and quit, N to discard changes and quit, or Esc to return to editing.", 0
+    status_save_as_saved: db "File saved to new path successfully.", 0
+    status_save_as_failed: db "Save As failed: unable to write file!", 0
+
+    global cur_offset_x
+    global cur_gutter_sep_x
+    global cur_hex_start_x
+    global cur_byte_spacing
+    global cur_group_gap
+    global cur_hex_end_x
+    global cur_ascii_sep_x
+    global cur_ascii_start_x
+    global cur_ascii_end_x
+    global cur_char_w
+    global row_h
+
+    cur_offset_x:       dd 16
+    cur_gutter_sep_x:   dd 88
+    cur_hex_start_x:    dd 100
+    cur_byte_spacing:   dd 24
+    cur_group_gap:      dd 12
+    cur_hex_end_x:      dd 488
+    cur_ascii_sep_x:    dd 500
+    cur_ascii_start_x:  dd 516
+    cur_ascii_end_x:    dd 644
+    cur_char_w:         dd 8
+    row_h:              dd 16
 
     str_gutter_sep:    db "|", 0
     str_quote_nl:      db "'", 0
@@ -181,6 +213,12 @@ section .bss
     global nibble_index
     global is_dirty
     global editor_mode
+    global editor_zoom_in
+    global editor_zoom_out
+    global editor_zoom_reset
+    global editor_start_save_as
+    global editor_commit_save_as
+    global editor_prompt_confirm_quit
     global sel_start
     global sel_end
     global has_selection
@@ -261,6 +299,8 @@ section .bss
     undo_stack:        resb MAX_UNDO * 16
 
     ; Modal input buffer (for Goto & Search)
+    global input_buf
+    global input_len
     input_buf:         resb 128
     input_len:         resd 1
     search_pat:        resb 128
@@ -279,21 +319,103 @@ section .text
 
 ; ------------------------------------------------------------------------------
 ; editor_update_geometry:
-; Computes dynamic visible rows and bytes based on win_h
+; Computes dynamic layout and visible rows/bytes based on win_h and font_scale
 ; ------------------------------------------------------------------------------
 global editor_update_geometry
 editor_update_geometry:
+    ; 1. Clamp font_scale to [1, 2]
+    mov ecx, [rel font_scale]
+    cmp ecx, 1
+    jge .fs_min_ok
+    mov ecx, 1
+    mov [rel font_scale], ecx
+.fs_min_ok:
+    cmp ecx, 2
+    jle .fs_max_ok
+    mov ecx, 2
+    mov [rel font_scale], ecx
+.fs_max_ok:
+
+    ; 2. Calculate dynamic layout variables based on font_scale
+    lea eax, [rcx * 8]
+    mov [rel cur_char_w], eax
+
+    imul eax, ecx, 16
+    mov [rel row_h], eax
+
+    imul eax, ecx, 16
+    mov [rel cur_offset_x], eax
+
+    imul eax, ecx, 88
+    mov [rel cur_gutter_sep_x], eax
+
+    imul eax, ecx, 100
+    mov [rel cur_hex_start_x], eax
+
+    imul eax, ecx, 24
+    mov [rel cur_byte_spacing], eax
+
+    imul eax, ecx, 12
+    mov [rel cur_group_gap], eax
+
+    imul eax, ecx, 488
+    mov [rel cur_hex_end_x], eax
+
+    imul eax, ecx, 500
+    mov [rel cur_ascii_sep_x], eax
+
+    imul eax, ecx, 516
+    mov [rel cur_ascii_start_x], eax
+
+    imul eax, ecx, 644
+    mov [rel cur_ascii_end_x], eax
+
+    ; 3. Compute dynamic visible_rows and visible_bytes
     mov eax, [rel win_h]
     sub eax, SEPARATOR_Y + STATUS_H + 16
-    cmp eax, 16
+    mov edx, [rel row_h]
+    cmp eax, edx
     jge .ug_calc
-    ; If win_h is uninitialized or too small, fall back to VISIBLE_ROWS
-    mov eax, 16 * VISIBLE_ROWS
+    mov eax, edx
+    imul eax, VISIBLE_ROWS
 .ug_calc:
-    shr eax, 4                        ; / 16 (FONT_H)
+    xor edx, edx
+    mov edi, [rel row_h]
+    div edi                           ; eax = eax / row_h
+    cmp eax, 1
+    jge .min_rows_ok
+    mov eax, 1
+.min_rows_ok:
     mov [rel visible_rows], eax
     shl eax, 4                        ; * 16 (BYTES_PER_ROW)
     mov [rel visible_bytes], eax
+    ret
+
+global editor_zoom_in
+editor_zoom_in:
+    cmp dword [rel font_scale], 2
+    jge .zi_done
+    inc dword [rel font_scale]
+    call editor_update_geometry
+    call editor_ensure_visible
+.zi_done:
+    ret
+
+global editor_zoom_out
+editor_zoom_out:
+    cmp dword [rel font_scale], 1
+    jle .zo_done
+    dec dword [rel font_scale]
+    call editor_update_geometry
+    call editor_ensure_visible
+.zo_done:
+    ret
+
+global editor_zoom_reset
+editor_zoom_reset:
+    mov dword [rel font_scale], 1
+    call editor_update_geometry
+    call editor_ensure_visible
     ret
 
 global editor_get_visible_rows
@@ -769,6 +891,63 @@ editor_start_search:
     mov byte [rel input_buf], 0
     ret
 
+global editor_start_save_as
+editor_start_save_as:
+    mov dword [rel editor_mode], MODE_SAVE_AS
+    ; Pre-fill input_buf with file_path
+    lea rsi, [rel file_path]
+    lea rdi, [rel input_buf]
+    xor ecx, ecx
+.sa_cp:
+    mov al, [rsi + rcx]
+    mov [rdi + rcx], al
+    test al, al
+    jz .sa_cp_done
+    inc ecx
+    cmp ecx, 120
+    jb .sa_cp
+    mov byte [rdi + rcx], 0
+.sa_cp_done:
+    mov [rel input_len], ecx
+    ret
+
+global editor_commit_save_as
+editor_commit_save_as:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16
+    cmp dword [rel input_len], 0
+    jle .sa_empty
+    lea rdi, [rel input_buf]
+    call file_save_as
+    test eax, eax
+    jnz .sa_fail
+    lea rdi, [rel status_save_as_saved]
+    mov esi, COLOR_HEX_ASCII
+    call editor_set_status
+    mov dword [rel editor_mode], MODE_NORMAL
+    leave
+    ret
+.sa_fail:
+    lea rdi, [rel status_save_as_failed]
+    mov esi, COLOR_MODIFIED
+    call editor_set_status
+    mov dword [rel editor_mode], MODE_NORMAL
+    leave
+    ret
+.sa_empty:
+    mov dword [rel editor_mode], MODE_NORMAL
+    leave
+    ret
+
+global editor_prompt_confirm_quit
+editor_prompt_confirm_quit:
+    mov dword [rel editor_mode], MODE_CONFIRM_QUIT
+    lea rdi, [rel prompt_confirm_quit]
+    mov esi, COLOR_MODIFIED
+    call editor_set_status
+    ret
+
 editor_cancel_modal:
     mov dword [rel editor_mode], MODE_NORMAL
     mov dword [rel input_len], 0
@@ -1101,12 +1280,18 @@ editor_handle_key:
     mov r15d, ecx                     ; state (ControlMask = 4)
 
     ; --------------------------------------------------------------------------
-    ; Check Modal Input Mode (Goto / Search)
+    ; Check Modal Input Mode (Confirm Quit / Save As / Goto / Search)
     ; --------------------------------------------------------------------------
+    cmp dword [rel editor_mode], MODE_CONFIRM_QUIT
+    je .handle_confirm_quit
+
+    cmp dword [rel editor_mode], MODE_SAVE_AS
+    je .handle_save_as
+
     cmp dword [rel editor_mode], MODE_NORMAL
     je .handle_normal_mode
 
-    ; In Modal Mode:
+    ; In Goto / Search Modal Mode:
     cmp r12, XK_Escape
     je .modal_esc
 
@@ -1135,6 +1320,101 @@ editor_handle_key:
     inc ecx
     mov [rel input_len], ecx
     mov byte [r8 + rcx], 0
+    jmp .key_done
+
+.handle_confirm_quit:
+    ; 'y' / 'Y' / Return: save and quit
+    cmp r12, 'y'
+    je .cq_save_quit
+    cmp r12, 'Y'
+    je .cq_save_quit
+    cmp r12, XK_Return
+    je .cq_save_quit
+
+    ; 'n' / 'N': discard changes and quit
+    cmp r12, 'n'
+    je .cq_discard_quit
+    cmp r12, 'N'
+    je .cq_discard_quit
+
+    ; Esc / 'c' / 'C': cancel quit modal
+    cmp r12, XK_Escape
+    je .cq_cancel
+    cmp r12, 'c'
+    je .cq_cancel
+    cmp r12, 'C'
+    je .cq_cancel
+
+    ; Ctrl+Q: also discards & quits
+    test r15d, 4
+    jz .key_done
+    cmp r12, 'q'
+    je .cq_discard_quit
+    cmp r12, 'Q'
+    je .cq_discard_quit
+    jmp .key_done
+
+.cq_save_quit:
+    call file_save
+    test eax, eax
+    jnz .cq_save_err
+    mov eax, 1                        ; Exit
+    jmp .key_exit_ret
+
+.cq_save_err:
+    lea rdi, [rel status_ro_err]
+    mov esi, COLOR_MODIFIED
+    call editor_set_status
+    mov dword [rel editor_mode], MODE_NORMAL
+    jmp .key_done
+
+.cq_discard_quit:
+    mov eax, 1                        ; Exit discarding modifications
+    jmp .key_exit_ret
+
+.cq_cancel:
+    mov dword [rel editor_mode], MODE_NORMAL
+    lea rdi, [rel status_ready]
+    mov esi, COLOR_TEXT_DIM
+    call editor_set_status
+    jmp .key_done
+
+.handle_save_as:
+    cmp r12, XK_Escape
+    je .sa_esc
+
+    cmp r12, XK_Return
+    je .sa_enter
+
+    cmp r12, XK_BackSpace
+    je .modal_bs
+
+    test r14d, r14d
+    jz .key_done
+
+    movzx eax, byte [r13]
+    cmp al, 32
+    jb .key_done
+    cmp al, 126
+    ja .key_done
+
+    mov ecx, [rel input_len]
+    cmp ecx, 120
+    jae .key_done
+
+    lea r8, [rel input_buf]
+    mov [r8 + rcx], al
+    inc ecx
+    mov [rel input_len], ecx
+    mov byte [r8 + rcx], 0
+    jmp .key_done
+
+.sa_esc:
+    call editor_cancel_modal
+    jmp .key_done
+
+.sa_enter:
+    call editor_commit_save_as
     jmp .key_done
 
 .modal_esc:
@@ -1172,6 +1452,15 @@ editor_handle_key:
     test r15d, 4
     jz .no_ctrl
 
+    ; Ctrl+Shift+S: Save As
+    test r15d, 1                      ; ShiftMask
+    jz .no_ctrl_shift_s
+    cmp r12, 's'
+    je .ctrl_shift_s
+    cmp r12, 'S'
+    je .ctrl_shift_s
+.no_ctrl_shift_s:
+
     ; Ctrl+A: Select All
     cmp r12, 'a'
     je .ctrl_a
@@ -1183,6 +1472,28 @@ editor_handle_key:
     je .ctrl_s
     cmp r12, 'S'
     je .ctrl_s
+
+    ; Ctrl + / Ctrl = / Ctrl KP_Add: Zoom In
+    cmp r12, '+'
+    je .ctrl_zoom_in
+    cmp r12, '='
+    je .ctrl_zoom_in
+    cmp r12, XK_KP_Add
+    je .ctrl_zoom_in
+
+    ; Ctrl - / Ctrl _ / Ctrl KP_Subtract: Zoom Out
+    cmp r12, '-'
+    je .ctrl_zoom_out
+    cmp r12, '_'
+    je .ctrl_zoom_out
+    cmp r12, XK_KP_Subtract
+    je .ctrl_zoom_out
+
+    ; Ctrl 0 / Ctrl KP_0: Reset Zoom
+    cmp r12, '0'
+    je .ctrl_zoom_reset
+    cmp r12, XK_KP_0
+    je .ctrl_zoom_reset
 
     ; Ctrl+Z: Undo
     cmp r12, 'z'
@@ -1582,17 +1893,30 @@ editor_handle_key:
     call editor_start_search
     jmp .key_done
 
+.ctrl_shift_s:
+    call editor_start_save_as
+    jmp .key_done
+
+.ctrl_zoom_in:
+    call editor_zoom_in
+    jmp .key_done
+
+.ctrl_zoom_out:
+    call editor_zoom_out
+    jmp .key_done
+
+.ctrl_zoom_reset:
+    call editor_zoom_reset
+    jmp .key_done
+
 .ctrl_q:
-    ; Clean exit flag
+    cmp dword [rel is_dirty], 0
+    je .do_clean_quit
+    call editor_prompt_confirm_quit
+    jmp .key_done
+.do_clean_quit:
     mov eax, 1                        ; request quit
-    add rsp, 8
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    pop rbx
-    pop rbp
-    ret
+    jmp .key_exit_ret
 
 .ctrl_home:
     mov qword [rel cursor_offset], 0
@@ -1797,8 +2121,7 @@ editor_handle_key:
     call editor_next_byte             ; advance cursor to new EOF
     jmp .key_done
 
-.key_done:
-    xor eax, eax                      ; 0 = keep running
+.key_exit_ret:
     add rsp, 8
     pop r15
     pop r14
@@ -1807,6 +2130,10 @@ editor_handle_key:
     pop rbx
     pop rbp
     ret
+
+.key_done:
+    xor eax, eax                      ; 0 = keep running
+    jmp .key_exit_ret
 
 ; ------------------------------------------------------------------------------
 ; editor_handle_click:
@@ -1954,42 +2281,43 @@ editor_handle_click:
     cmp r13d, eax
     jge .click_done
 
-    ; row_idx = (y - (SEPARATOR_Y + 4)) / 16
+    ; row_idx = (y - (SEPARATOR_Y + 4)) / row_h
     mov eax, r13d
     sub eax, SEPARATOR_Y + 4
     cmp eax, 0
     jl .click_done
-    shr eax, 4                        ; / 16
+    xor edx, edx
+    div dword [rel row_h]
     cmp eax, [rel visible_rows]
     jae .click_done
     mov ebx, eax                      ; row_idx in ebx
 
-    ; Check Hex Pane click (HEX_START_X <= x < HEX_END_X)
-    cmp r12d, HEX_START_X
+    ; Check Hex Pane click (cur_hex_start_x <= x < cur_hex_end_x)
+    cmp r12d, [rel cur_hex_start_x]
     jl .check_ascii_click
-    cmp r12d, HEX_END_X
+    cmp r12d, [rel cur_hex_end_x]
     jge .check_ascii_click
 
     ; Hex column calculation
     mov eax, r12d
-    sub eax, HEX_START_X
-    ; Check if before group gap (first 8 bytes: 8 * 24 = 192 px)
-    cmp eax, 192
+    sub eax, [rel cur_hex_start_x]
+    ; Check if before group gap (first 8 bytes: 8 * cur_byte_spacing)
+    mov ecx, [rel cur_byte_spacing]
+    lea edx, [rcx * 8]
+    cmp eax, edx
     jl .hex_col_0_7
-    sub eax, GROUP_GAP
-    cmp eax, 192
+    sub eax, [rel cur_group_gap]
+    cmp eax, edx
     jl .click_done
-    mov ecx, 24
     xor edx, edx
-    div ecx
+    div dword [rel cur_byte_spacing]
     cmp eax, 16
     jae .click_done
     jmp .set_cursor_target_hex
 
 .hex_col_0_7:
-    mov ecx, 24
     xor edx, edx
-    div ecx
+    div dword [rel cur_byte_spacing]
     cmp eax, 8
     jae .click_done
 
@@ -2015,12 +2343,15 @@ editor_handle_click:
     jmp .click_done
 
 .check_ascii_click:
-    ; ASCII Pane (ASCII_START_X <= x < ASCII_START_X + 16 * 8)
-    cmp r12d, ASCII_START_X
+    ; ASCII Pane (cur_ascii_start_x <= x < cur_ascii_end_x)
+    cmp r12d, [rel cur_ascii_start_x]
     jl .click_done
+    cmp r12d, [rel cur_ascii_end_x]
+    jge .click_done
     mov eax, r12d
-    sub eax, ASCII_START_X
-    shr eax, 3                        ; / 8
+    sub eax, [rel cur_ascii_start_x]
+    xor edx, edx
+    div dword [rel cur_char_w]
     cmp eax, 16
     jae .click_done
 
@@ -2152,14 +2483,15 @@ editor_handle_mouse_move:
     add qword [rel scroll_offset], 16
 
 .calc_sel_offset:
-    ; Calculate row: (y - (SEPARATOR_Y + 4)) / 16
+    ; Calculate row: (y - (SEPARATOR_Y + 4)) / row_h
     mov eax, r13d
     sub eax, SEPARATOR_Y + 4
     test eax, eax
     jns .row_not_neg
     xor eax, eax
 .row_not_neg:
-    shr eax, 4                        ; / 16
+    xor edx, edx
+    div dword [rel row_h]
     cmp eax, [rel visible_rows]
     jl .row_clamp_max
     mov eax, [rel visible_rows]
@@ -2173,21 +2505,22 @@ editor_handle_mouse_move:
 
     ; Hex Pane Column
     mov eax, r12d
-    sub eax, HEX_START_X
+    sub eax, [rel cur_hex_start_x]
     test eax, eax
     jns .hex_x_not_neg
     xor eax, eax
 .hex_x_not_neg:
-    cmp eax, 192
+    mov ecx, [rel cur_byte_spacing]
+    lea edx, [rcx * 8]
+    cmp eax, edx
     jl .hex_col_div
-    sub eax, GROUP_GAP
+    sub eax, [rel cur_group_gap]
     test eax, eax
     jns .hex_col_div
     xor eax, eax
 .hex_col_div:
-    mov ecx, 24
     xor edx, edx
-    div ecx
+    div dword [rel cur_byte_spacing]
     cmp eax, 16
     jl .col_ready
     mov eax, 15
@@ -2195,12 +2528,13 @@ editor_handle_mouse_move:
 
 .calc_ascii_col:
     mov eax, r12d
-    sub eax, ASCII_START_X
+    sub eax, [rel cur_ascii_start_x]
     test eax, eax
     jns .asc_x_not_neg
     xor eax, eax
 .asc_x_not_neg:
-    shr eax, 3                        ; / 8
+    xor edx, edx
+    div dword [rel cur_char_w]
     cmp eax, 16
     jl .col_ready
     mov eax, 15
@@ -2440,23 +2774,24 @@ render_row_selection_polygon:
     ; 1. Hex Pane Selection Polygon
     ; --------------------------------------------------------------------------
     mov eax, r10d
-    imul eax, 24
-    add eax, HEX_START_X
+    imul eax, [rel cur_byte_spacing]
+    add eax, [rel cur_hex_start_x]
     cmp r10d, 8
     jl .rsp_h1_nogap
-    add eax, 12
+    add eax, [rel cur_group_gap]
 .rsp_h1_nogap:
     sub eax, 2
     mov ebx, eax                      ; ebx = hx1
 
     mov eax, r11d
-    imul eax, 24
-    add eax, HEX_START_X
+    imul eax, [rel cur_byte_spacing]
+    add eax, [rel cur_hex_start_x]
     cmp r11d, 8
     jl .rsp_h2_nogap
-    add eax, 12
+    add eax, [rel cur_group_gap]
 .rsp_h2_nogap:
-    add eax, 18                       ; 16 + 2
+    mov edx, [rel cur_char_w]
+    lea eax, [eax + edx * 2 + 2]      ; 2 chars width + 2 px pad
     mov r15d, eax                     ; r15d = hx2
 
     ; Fill Translucent Polygon Interior in Hex Pane
@@ -2464,7 +2799,7 @@ render_row_selection_polygon:
     mov esi, r14d                     ; y
     mov edx, r15d
     sub edx, ebx                      ; w = hx2 - hx1
-    mov ecx, 16                       ; h = 16
+    mov ecx, [rel row_h]              ; h = row_h
     mov r8d, COLOR_SEL_FILL
     mov r9d, COLOR_SEL_ALPHA
     call draw_rect_alpha
@@ -2473,7 +2808,7 @@ render_row_selection_polygon:
     mov edi, ebx
     mov esi, r14d
     mov edx, r14d
-    add edx, 16
+    add edx, [rel row_h]
     mov ecx, COLOR_SEL_BORDER
     call draw_vline
 
@@ -2481,7 +2816,7 @@ render_row_selection_polygon:
     dec edi
     mov esi, r14d
     mov edx, r14d
-    add edx, 16
+    add edx, [rel row_h]
     mov ecx, COLOR_SEL_BORDER
     call draw_vline
 
@@ -2507,11 +2842,11 @@ render_row_selection_polygon:
     cmp r10, rcx
     jae .rsp_hex_check_bot
     mov eax, ecx
-    imul eax, 24
-    add eax, HEX_START_X
+    imul eax, [rel cur_byte_spacing]
+    add eax, [rel cur_hex_start_x]
     cmp ecx, 8
     jl .rsp_step_top_nogap
-    add eax, 12
+    add eax, [rel cur_group_gap]
 .rsp_step_top_nogap:
     sub eax, 2                        ; eax = hx_prev
     mov edi, ebx                      ; hx1
@@ -2529,7 +2864,8 @@ render_row_selection_polygon:
     mov edi, ebx
     mov esi, r15d
     mov edx, r14d
-    add edx, 15
+    add edx, [rel row_h]
+    dec edx
     mov ecx, COLOR_SEL_BORDER
     call draw_hline
     jmp .rsp_hex_done
@@ -2547,17 +2883,18 @@ render_row_selection_polygon:
     jbe .rsp_hex_done
     inc ecx
     mov eax, ecx
-    imul eax, 24
-    add eax, HEX_START_X
+    imul eax, [rel cur_byte_spacing]
+    add eax, [rel cur_hex_start_x]
     cmp ecx, 8
     jl .rsp_step_bot_nogap
-    add eax, 12
+    add eax, [rel cur_group_gap]
 .rsp_step_bot_nogap:
     sub eax, 2                        ; eax = hx_next
     mov edi, eax
     mov esi, r15d
     mov edx, r14d
-    add edx, 15
+    add edx, [rel row_h]
+    dec edx
     mov ecx, COLOR_SEL_BORDER
     call draw_hline
 
@@ -2569,14 +2906,14 @@ render_row_selection_polygon:
     mov r11, [rsp + 24]               ; c2
 
     mov eax, r10d
-    shl eax, 3
-    add eax, ASCII_START_X
+    imul eax, [rel cur_char_w]
+    add eax, [rel cur_ascii_start_x]
     mov ebx, eax                      ; ebx = ax1
 
     mov eax, r11d
     inc eax
-    shl eax, 3
-    add eax, ASCII_START_X
+    imul eax, [rel cur_char_w]
+    add eax, [rel cur_ascii_start_x]
     mov r15d, eax                     ; r15d = ax2
 
     ; Translucent Fill in ASCII pane
@@ -2584,7 +2921,7 @@ render_row_selection_polygon:
     mov esi, r14d
     mov edx, r15d
     sub edx, ebx
-    mov ecx, 16
+    mov ecx, [rel row_h]
     mov r8d, COLOR_SEL_FILL
     mov r9d, COLOR_SEL_ALPHA
     call draw_rect_alpha
@@ -2593,7 +2930,7 @@ render_row_selection_polygon:
     mov edi, ebx
     mov esi, r14d
     mov edx, r14d
-    add edx, 16
+    add edx, [rel row_h]
     mov ecx, COLOR_SEL_BORDER
     call draw_vline
 
@@ -2601,7 +2938,7 @@ render_row_selection_polygon:
     dec edi
     mov esi, r14d
     mov edx, r14d
-    add edx, 16
+    add edx, [rel row_h]
     mov ecx, COLOR_SEL_BORDER
     call draw_vline
 
@@ -2627,8 +2964,8 @@ render_row_selection_polygon:
     cmp r10, rcx
     jae .rsp_asc_check_bot
     mov eax, ecx
-    shl eax, 3
-    add eax, ASCII_START_X            ; ax_prev
+    imul eax, [rel cur_char_w]
+    add eax, [rel cur_ascii_start_x]  ; ax_prev
     mov edi, ebx
     mov esi, eax
     mov edx, r14d
@@ -2644,7 +2981,8 @@ render_row_selection_polygon:
     mov edi, ebx
     mov esi, r15d
     mov edx, r14d
-    add edx, 15
+    add edx, [rel row_h]
+    dec edx
     mov ecx, COLOR_SEL_BORDER
     call draw_hline
     jmp .rsp_done
@@ -2662,10 +3000,15 @@ render_row_selection_polygon:
     jbe .rsp_done
     inc ecx
     mov eax, ecx
-    shl eax, 3
-    add eax, ASCII_START_X            ; ax_next
+    imul eax, [rel cur_char_w]
+    add eax, [rel cur_ascii_start_x]  ; ax_next
     mov edi, eax
     mov esi, r15d
+    mov edx, r14d
+    add edx, [rel row_h]
+    dec edx
+    mov ecx, COLOR_SEL_BORDER
+    call draw_hline
     mov edx, r14d
     add edx, 15
     mov ecx, COLOR_SEL_BORDER
@@ -4384,21 +4727,21 @@ editor_render:
     ; 3. Render Column Header Bar
     ; --------------------------------------------------------------------------
     lea rdi, [rel col_hdr_offset]
-    mov esi, OFFSET_X
+    mov esi, [rel cur_offset_x]
     mov edx, 34
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
     lea rdi, [rel col_hdr_hex]
-    mov esi, HEX_START_X
+    mov esi, [rel cur_hex_start_x]
     mov edx, 34
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
     lea rdi, [rel col_hdr_ascii]
-    mov esi, ASCII_START_X
+    mov esi, [rel cur_ascii_start_x]
     mov edx, 34
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
@@ -4437,18 +4780,19 @@ editor_render:
 
 .draw_this_row:
 
-    ; row_y = SEPARATOR_Y + 6 + r12 * 16
-    mov r14d, r12d
-    shl r14d, 4
-    add r14d, SEPARATOR_Y + 6         ; r14d = row_y
+    ; row_y = SEPARATOR_Y + 6 + r12 * row_h
+    mov eax, r12d
+    imul eax, [rel row_h]
+    add eax, SEPARATOR_Y + 6
+    mov r14d, eax                     ; r14d = row_y
 
-    ; A. Draw 16-hex-digit Offset
+    ; A. Draw 8-hex-digit (32-bit / 4-byte) Offset
     lea rdi, [rel str_buf_1]
-    mov rsi, r13
-    call format_hex_qword
+    mov esi, r13d                     ; 32-bit offset (4 bytes)
+    call format_hex_dword
 
     lea rdi, [rel str_buf_1]
-    mov esi, OFFSET_X
+    mov esi, [rel cur_offset_x]
     mov edx, r14d
     mov ecx, COLOR_OFFSET
     mov r8d, COLOR_BG
@@ -4456,7 +4800,7 @@ editor_render:
 
     ; Draw Gutter separator '|'
     lea rdi, [rel str_gutter_sep]
-    mov esi, GUTTER_SEP_X
+    mov esi, [rel cur_gutter_sep_x]
     mov edx, r14d
     mov ecx, COLOR_DIVIDER
     mov r8d, COLOR_BG
@@ -4529,11 +4873,11 @@ editor_render:
     ; BYTE IS IN SELECTION!
     ; 1. Draw Hex Digits Transparently over polygon fill
     mov edx, r15d
-    imul edx, BYTE_SPACING
-    add edx, HEX_START_X
+    imul edx, [rel cur_byte_spacing]
+    add edx, [rel cur_hex_start_x]
     cmp r15d, 8
     jl .sel_no_gap
-    add edx, GROUP_GAP
+    add edx, [rel cur_group_gap]
 .sel_no_gap:
     ; edx = hex_x
 
@@ -4556,7 +4900,7 @@ editor_render:
     push rcx
     push rdx
     mov edi, edx
-    add edi, FONT_W
+    add edi, [rel cur_char_w]
     mov esi, r14d
     lea r10, [rel hex_lut]
     movzx edx, byte [r10 + rcx * 2 + 1]
@@ -4576,7 +4920,7 @@ editor_render:
     pop rdx
 
     mov edi, edx
-    add edi, FONT_W
+    add edi, [rel cur_char_w]
     mov esi, r14d
     mov edx, '-'
     mov ecx, COLOR_SEL_TEXT
@@ -4585,8 +4929,8 @@ editor_render:
 .sel_ascii:
     ; 2. Draw ASCII preview Transparently over polygon fill
     mov edi, r15d
-    shl edi, 3
-    add edi, ASCII_START_X
+    imul edi, [rel cur_char_w]
+    add edi, [rel cur_ascii_start_x]
     mov esi, r14d
     mov edx, ecx                      ; byte value
     test r9d, r9d
@@ -4611,11 +4955,11 @@ editor_render:
 .not_in_selection:
     ; Calculate Hex X coordinate
     mov edx, r15d
-    imul edx, BYTE_SPACING
-    add edx, HEX_START_X
+    imul edx, [rel cur_byte_spacing]
+    add edx, [rel cur_hex_start_x]
     cmp r15d, 8
     jl .no_group_gap
-    add edx, GROUP_GAP
+    add edx, [rel cur_group_gap]
 .no_group_gap:
     ; edx = hex_x
 
@@ -4719,7 +5063,7 @@ editor_render:
     push r11
 
     mov edi, edx
-    add edi, FONT_W
+    add edi, [rel cur_char_w]
     mov esi, r14d
     lea rax, [rel hex_lut]
     movzx edx, byte [rax + rcx * 2 + 1]
@@ -4765,7 +5109,7 @@ editor_render:
     push r11
 
     mov edi, edx
-    add edi, FONT_W
+    add edi, [rel cur_char_w]
     mov esi, r14d
     mov edx, '-'
     mov ecx, r10d
@@ -4784,8 +5128,8 @@ editor_render:
     ; Draw ASCII preview character
     ; --------------------------------------------------------------------------
     mov edi, r15d
-    shl edi, 3                        ; * 8
-    add edi, ASCII_START_X
+    imul edi, [rel cur_char_w]
+    add edi, [rel cur_ascii_start_x]
     mov esi, r14d
 
     ; Determine display character
@@ -4863,7 +5207,7 @@ editor_render:
 .row_bytes_done:
     ; Draw ASCII separator '|'
     lea rdi, [rel str_gutter_sep]
-    mov esi, ASCII_SEP_X
+    mov esi, [rel cur_ascii_sep_x]
     mov edx, r14d
     mov ecx, COLOR_DIVIDER
     mov r8d, COLOR_BG
@@ -5445,6 +5789,12 @@ editor_render:
     jmp .render_all_done
 
 .render_modal_bar:
+    cmp dword [rel editor_mode], MODE_CONFIRM_QUIT
+    je .render_confirm_quit_bar
+
+    cmp dword [rel editor_mode], MODE_SAVE_AS
+    je .render_save_as_bar
+
     cmp dword [rel editor_mode], MODE_GOTO
     jne .render_search_bar
 
@@ -5468,6 +5818,50 @@ editor_render:
 
     ; Line 2 help
     lea rdi, [rel prompt_goto_help]
+    mov esi, 16
+    mov edx, r12d
+    add edx, 28
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+    jmp .render_all_done
+
+.render_save_as_bar:
+    lea rdi, [rel prompt_save_as]
+    mov esi, 16
+    mov edx, r12d
+    add edx, 8
+    mov ecx, COLOR_PROMPT_FG
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+    lea rdi, [rel input_buf]
+    mov esi, 120
+    mov edx, r12d
+    add edx, 8
+    mov ecx, COLOR_TEXT_BRIGHT
+    mov r8d, COLOR_PROMPT_BG
+    call draw_string
+
+    lea rdi, [rel prompt_save_as_help]
+    mov esi, 16
+    mov edx, r12d
+    add edx, 28
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+    jmp .render_all_done
+
+.render_confirm_quit_bar:
+    lea rdi, [rel prompt_confirm_quit]
+    mov esi, 16
+    mov edx, r12d
+    add edx, 8
+    mov ecx, COLOR_MODIFIED
+    mov r8d, COLOR_STATUS_BG
+    call draw_string
+
+    lea rdi, [rel prompt_confirm_quit_help]
     mov esi, 16
     mov edx, r12d
     add edx, 28

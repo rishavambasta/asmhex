@@ -11,7 +11,7 @@ section .data
     default_scratch_name: db "[ Scratch Buffer - 4 KB ]", 0
     welcome_banner:
         db "================================================================", 10
-        db "  AsmHex v1.1 - Pure x86_64 Assembly Graphical Hex Editor       ", 10
+        db "  AsmHex v1.2 - Pure x86_64 Assembly Graphical Hex Editor       ", 10
         db "  Developed for ultra-fast, zero-latency binary editing.        ", 10
         db "================================================================", 10
         db "  * Use Arrows or Mouse to navigate bytes                       ", 10
@@ -149,6 +149,11 @@ file_open:
     mov rax, [rel stat_buf + 48]
     mov [rel file_size], rax
 
+    ; Enforce 4 GiB file size limit (will not edit a file > 4 GiB)
+    mov rsi, MAX_FILE_SIZE
+    cmp rax, rsi
+    ja .file_too_large
+
     ; capacity = max(file_size + 65536, 65536), page-aligned (4096)
     mov rsi, rax
     add rsi, 65536
@@ -207,6 +212,14 @@ file_open:
     rep stosb
 
     xor eax, eax                      ; return 0 (success)
+    jmp .open_done
+
+.file_too_large:
+    mov rax, SYS_close
+    mov edi, [rel file_fd]
+    syscall
+    mov dword [rel file_fd], -1
+    mov rax, -4
     jmp .open_done
 
 .open_failed:
@@ -316,6 +329,9 @@ file_ensure_capacity:
     sub rsp, 8
 
     mov r12, rdi                      ; needed_bytes
+    mov rax, MAX_FILE_SIZE
+    cmp r12, rax
+    ja .ensure_fail
     mov rbx, [rel file_capacity]
     cmp r12, rbx
     jbe .cap_ok
@@ -572,6 +588,128 @@ file_save:
     ret
 
 ; ------------------------------------------------------------------------------
+; file_save_as:
+; Saves memory contents to a newly specified file path (Save As...)
+; rdi = pointer to null-terminated new file path string
+; Returns rax = 0 on success, negative error code on failure
+; ------------------------------------------------------------------------------
+global file_save_as
+file_save_as:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8
+
+    mov r12, rdi                      ; save new path pointer
+    test r12, r12
+    jz .fsa_null_err
+    cmp byte [r12], 0
+    jz .fsa_null_err
+
+    mov rbx, [rel file_ptr]
+    test rbx, rbx
+    jz .fsa_no_buf
+
+    ; Close previous file descriptor if open
+    mov edi, [rel file_fd]
+    cmp edi, 0
+    jle .fsa_skip_close
+    mov rax, SYS_close
+    syscall
+    mov dword [rel file_fd], -1
+
+.fsa_skip_close:
+    ; Copy new path into file_path buffer
+    lea rsi, [r12]
+    lea rdi, [rel file_path]
+    mov ecx, 511
+.fsa_copy_loop:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    test al, al
+    jz .fsa_copy_done
+    dec ecx
+    jnz .fsa_copy_loop
+    mov byte [rdi], 0
+.fsa_copy_done:
+
+    ; Create/open target file with O_CREAT | O_RDWR | O_TRUNC, mode 0644o (420)
+    mov rax, SYS_open
+    lea rdi, [rel file_path]
+    mov esi, O_CREAT | O_RDWR | O_TRUNC
+    mov edx, 420                      ; 0644 octal
+    syscall
+
+    cmp rax, 0
+    jl .fsa_open_err
+    mov [rel file_fd], eax
+
+    ; Write contents from memory: SYS_write(fd, file_ptr, file_size)
+    mov r12, [rel file_size]
+    xor r13, r13
+.fsa_write_loop:
+    cmp r13, r12
+    jae .fsa_write_done
+    mov rax, SYS_write
+    mov edi, [rel file_fd]
+    lea rsi, [rbx + r13]
+    mov rdx, r12
+    sub rdx, r13
+    syscall
+
+    cmp rax, 0
+    jle .fsa_write_err
+    add r13, rax
+    jmp .fsa_write_loop
+
+.fsa_write_done:
+    ; ftruncate(fd, file_size)
+    mov rax, SYS_ftruncate
+    mov edi, [rel file_fd]
+    mov rsi, [rel file_size]
+    syscall
+
+    ; fsync(fd)
+    mov rax, SYS_fsync
+    mov edi, [rel file_fd]
+    syscall
+
+    ; Reset status flags: now a saved, editable, non-scratch file!
+    mov dword [rel is_readonly], 0
+    mov dword [rel is_scratch], 0
+    mov dword [rel is_dirty], 0
+
+    xor eax, eax                      ; 0 = Success
+    jmp .fsa_done
+
+.fsa_null_err:
+    mov rax, -1
+    jmp .fsa_done
+
+.fsa_no_buf:
+    mov rax, -2
+    jmp .fsa_done
+
+.fsa_open_err:
+    mov rax, -3
+    jmp .fsa_done
+
+.fsa_write_err:
+    mov rax, -4
+
+.fsa_done:
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
 ; file_close:
 ; Unmaps and closes currently open file
 ; ------------------------------------------------------------------------------
@@ -668,6 +806,11 @@ file2_open:
     ; st_size is at stat_buf2 + 48
     mov rax, [rel stat_buf2 + 48]
     mov [rel file2_size], rax
+
+    ; Enforce 4 GiB file size limit
+    mov rsi, MAX_FILE_SIZE
+    cmp rax, rsi
+    ja .f2_fstat_failed
 
     ; capacity = max(file2_size + 4096, 4096), page aligned
     mov rsi, rax
