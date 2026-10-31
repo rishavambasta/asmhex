@@ -23,9 +23,8 @@ jobs:
 
       - name: Install System Dependencies
         run: |
-          sudo dpkg --add-architecture i386 || true
           sudo apt-get update
-          sudo apt-get install -y nasm gcc gcc-mingw-w64-x86-64 mingw-w64 libx11-dev libxext-dev xvfb wine64 wine zip
+          sudo apt-get install -y nasm gcc gcc-mingw-w64-x86-64 mingw-w64 libx11-dev libxext-dev xvfb wine zip
 
       - name: Compile Linux and Windows 64-bit Binaries
         run: |
@@ -37,7 +36,9 @@ jobs:
         run: xvfb-run --auto-servernum make test
 
       - name: Run Windows 64-bit Automated Test Suite under Wine
-        run: make test-win64
+        env:
+          WINEDEBUG: -all
+        run: xvfb-run --auto-servernum make test-win64
 
       - name: Run Live Resizing Verification
         run: |
