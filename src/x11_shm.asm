@@ -125,7 +125,7 @@ section .bss
     win_w:          resd 1            ; Window width
     win_h:          resd 1            ; Window height
     fb_data:        resq 1            ; Framebuffer pointer
-    fb_pitch:       resd 1            ; Bytes per scanline
+    fb_pitch:       resq 1            ; Bytes per scanline
 
 section .text
 
@@ -427,7 +427,7 @@ x11_create_framebuffer:
 
     ; fb_pitch = ximage->bytes_per_line
     mov eax, [rbx + 44]
-    mov [rel fb_pitch], eax
+    mov [rel fb_pitch], rax
 
     ; shminfo.readOnly = 0
     mov dword [rel shminfo + 24], 0
@@ -491,7 +491,7 @@ x11_create_framebuffer:
 
     ; fb_pitch = ximage->bytes_per_line
     mov edx, [rax + 44]
-    mov [rel fb_pitch], edx
+    mov [rel fb_pitch], rdx
 
     mov dword [rel use_shm], 0
     xor eax, eax

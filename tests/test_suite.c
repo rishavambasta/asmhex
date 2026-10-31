@@ -50,7 +50,7 @@ extern int32_t thumb_h;
 extern uint32_t *fb_data;
 extern int32_t win_w;
 extern int32_t win_h;
-extern int32_t fb_pitch;
+extern int64_t fb_pitch;
 extern uint32_t visible_rows;
 extern uint32_t visible_bytes;
 extern void editor_update_geometry(void);
@@ -68,6 +68,7 @@ extern void editor_handle_button_release(int x, int y);
 extern void editor_undo(void);
 extern void editor_search_next(void);
 extern int dump_screenshot(const char *filename);
+extern void x11_flush(void);
 
 extern void init_crc32_table(void);
 extern uint32_t compute_crc32(const uint8_t *data, uint64_t len);
@@ -1223,6 +1224,24 @@ int main() {
     editor_handle_key('0', "0", 1, 4);
     assert(font_scale == 1);
     printf("  -> Verified Ctrl+ / Ctrl- / Ctrl= / Ctrl 0 keyboard shortcuts.\n");
+
+    // Live X11 active display test for window resizing on zoom
+    if (getenv("DISPLAY")) {
+        int x11_live = x11_init("Live Zoom Test", 1040, 720);
+        if (x11_live == 0) {
+            editor_init();
+            editor_handle_key(XK_plus, "+", 1, 4);
+            assert(font_scale == 2);
+            editor_render();
+            x11_flush();
+            editor_handle_key(XK_minus, "-", 1, 4);
+            assert(font_scale == 1);
+            editor_render();
+            x11_flush();
+            x11_cleanup();
+            printf("  -> Verified live X11 window resize and render on zoom.\n");
+        }
+    }
 
     // =========================================================================
     // Test 29: Unsaved Changes Quit Warning Modal (Ctrl+Q & Window Close)

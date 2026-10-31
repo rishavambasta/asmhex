@@ -475,6 +475,8 @@ editor_update_geometry:
 
 global editor_zoom_in
 editor_zoom_in:
+    push rbp
+    mov rbp, rsp
     cmp dword [rel font_scale], 2
     jge .zi_done
     inc dword [rel font_scale]
@@ -484,10 +486,13 @@ editor_zoom_in:
     mov esi, 1040
     call x11_set_window_size
 .zi_done:
+    leave
     ret
 
 global editor_zoom_out
 editor_zoom_out:
+    push rbp
+    mov rbp, rsp
     cmp dword [rel font_scale], 1
     jle .zo_done
     dec dword [rel font_scale]
@@ -497,16 +502,20 @@ editor_zoom_out:
     mov esi, 720
     call x11_set_window_size
 .zo_done:
+    leave
     ret
 
 global editor_zoom_reset
 editor_zoom_reset:
+    push rbp
+    mov rbp, rsp
     mov dword [rel font_scale], 1
     call editor_update_geometry
     call editor_ensure_visible
     mov edi, 1040
     mov esi, 720
     call x11_set_window_size
+    leave
     ret
 
 global editor_get_visible_rows
