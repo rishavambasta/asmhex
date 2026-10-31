@@ -4,12 +4,15 @@
 ; ==============================================================================
 
 %include "constants.inc"
+%include "macros.inc"
 
 extern win_w
 extern win_h
 extern fb_data
 extern fb_pitch
+%ifndef OS_WINDOWS
 extern snprintf
+%endif
 
 section .rodata
     align 16
@@ -1040,6 +1043,7 @@ format_size_human:
     mov rax, rdi
     ret
 
+%ifndef OS_WINDOWS
 ; ------------------------------------------------------------------------------
 ; dump_screenshot:
 ; Writes current backbuffer contents as a standard 24-bit PPM image file
@@ -1078,7 +1082,7 @@ dump_screenshot:
     mov ecx, [rel win_w]
     mov r8d, [rel win_h]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
     mov rbx, rax                      ; rbx = header len
 
     ; Write PPM header
@@ -1164,3 +1168,4 @@ dump_screenshot:
     pop rbx
     pop rbp
     ret
+%endif

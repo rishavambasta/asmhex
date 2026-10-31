@@ -52,3 +52,14 @@
     mov %1, %3
 %%not_above:
 %endmacro
+
+; Cross-platform dynamic linker call (ELF PLT on Linux, host bridge on Windows)
+%ifdef OS_WINDOWS
+    %macro CALL_PLT 1
+        call host_%1
+    %endmacro
+%else
+    %macro CALL_PLT 1
+        call %1 wrt ..plt
+    %endmacro
+%endif

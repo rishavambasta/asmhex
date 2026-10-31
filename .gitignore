@@ -1,7 +1,10 @@
 # Build artifacts
 build/
+dist/
 asmhex
+asmhex.exe
 *.o
+*.obj
 *.a
 *.so
 

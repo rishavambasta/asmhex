@@ -34,9 +34,15 @@ extern file2_close
 extern compute_crc32
 extern compute_sha256
 extern format_sha256_hex
+%ifdef OS_WINDOWS
+extern host_printf
+extern host_snprintf
+extern host_strlen
+%else
 extern printf
 extern snprintf
 extern strlen
+%endif
 
 extern init_renderer_luts
 extern draw_rect
@@ -3258,7 +3264,7 @@ diff_set_nav_status:
     mov r8, [rel diff_count]          ; arg 5: total diffs
     mov r9, [rel cursor_offset]       ; arg 6: cursor_offset
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
     mov dword [rel status_msg_color], COLOR_DIFF_FG
     jmp .dsns_done
 
@@ -3269,7 +3275,7 @@ diff_set_nav_status:
     mov rcx, [rel diff_count]
     mov r8, [rel cursor_offset]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
     mov dword [rel status_msg_color], COLOR_TEXT_DIM
 
 .dsns_done:
@@ -4126,7 +4132,7 @@ editor_compute_selection_checksum:
     mov r8d, [rel last_crc32]
     lea r9, [rel last_sha256_hex]
     xor eax, eax
-    call printf wrt ..plt
+    CALL_PLT printf
     jmp .calc_done
 
 .calc_empty:
@@ -4152,7 +4158,7 @@ editor_compute_selection_checksum:
 
     lea rdi, [rel fmt_checksum_empty]
     xor eax, eax
-    call printf wrt ..plt
+    CALL_PLT printf
 
 .calc_done:
     add rsp, 8
@@ -4250,7 +4256,7 @@ render_header_tabs:
     lea rdx, [rel fmt_tab1_active]
     lea rcx, [rel tab1_name_buf]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     lea rdi, [rsp]
     mov esi, 120
@@ -4319,7 +4325,7 @@ render_header_tabs:
     lea rdx, [rel fmt_tab1_inactive]
     lea rcx, [rel tab1_name_buf]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     lea rdi, [rsp]
     mov esi, 120
@@ -4396,7 +4402,7 @@ render_header_tabs:
     lea rdx, [rel fmt_tab2_active]
     lea rcx, [rel tab2_name_buf]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     lea rdi, [rsp]
     mov esi, 330
@@ -4463,7 +4469,7 @@ render_header_tabs:
     lea rdx, [rel fmt_tab2_inactive]
     lea rcx, [rel tab2_name_buf]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     lea rdi, [rsp]
     mov esi, 330
@@ -4579,7 +4585,7 @@ render_diff_bottom_bar:
     lea rdx, [rel fmt_diff_cnt_hdr]
     mov ecx, [rel diff_list_count]
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     lea rdi, [rsp]
     mov esi, r13d
@@ -4594,7 +4600,7 @@ render_diff_bottom_bar:
 
     ; Measure length of count string
     lea rdi, [rsp]
-    call strlen wrt ..plt
+    CALL_PLT strlen
     imul eax, [rel cur_char_w]
     add r13d, eax
     mov eax, [rel cur_char_w]
@@ -4684,11 +4690,11 @@ render_diff_bottom_bar:
     lea rdx, [rel fmt_diff_active_chip]
     mov rcx, rax
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     ; Measure width
     lea rdi, [rsp]
-    call strlen wrt ..plt
+    CALL_PLT strlen
     imul eax, [rel cur_char_w]
     mov r8d, eax                      ; chip_width
 
@@ -4725,7 +4731,7 @@ render_diff_bottom_bar:
     call draw_string
 
     lea rdi, [rsp]
-    call strlen wrt ..plt
+    CALL_PLT strlen
     imul eax, [rel cur_char_w]
     add r13d, eax
     mov eax, 12
@@ -4740,10 +4746,10 @@ render_diff_bottom_bar:
     lea rdx, [rel fmt_diff_chip]
     mov rcx, rax
     xor eax, eax
-    call snprintf wrt ..plt
+    CALL_PLT snprintf
 
     lea rdi, [rsp]
-    call strlen wrt ..plt
+    CALL_PLT strlen
     imul eax, [rel cur_char_w]
     mov r8d, eax                      ; chip_width
 
@@ -4768,7 +4774,7 @@ render_diff_bottom_bar:
     call draw_string
 
     lea rdi, [rsp]
-    call strlen wrt ..plt
+    CALL_PLT strlen
     imul eax, [rel cur_char_w]
     add r13d, eax
     mov eax, 12

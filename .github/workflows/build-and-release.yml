@@ -2,11 +2,11 @@ name: Build and Release
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ master, main, win64 ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ master, main ]
+    branches: [ master, main, win64 ]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-and-test:
-    name: Build & Test (x86_64 Pure Assembly)
+    name: Build & Test (Linux x86_64 & Windows x64)
     runs-on: ubuntu-latest
 
     steps:
@@ -23,14 +23,21 @@ jobs:
 
       - name: Install System Dependencies
         run: |
+          sudo dpkg --add-architecture i386 || true
           sudo apt-get update
-          sudo apt-get install -y nasm gcc libx11-dev libxext-dev xvfb
+          sudo apt-get install -y nasm gcc gcc-mingw-w64-x86-64 mingw-w64 libx11-dev libxext-dev xvfb wine64 wine zip
 
-      - name: Compile AsmHex Binary
-        run: make clean && make
+      - name: Compile Linux and Windows 64-bit Binaries
+        run: |
+          make clean
+          make -j$(nproc)
+          make win64
 
-      - name: Run 24-Point Automated Test Suite
+      - name: Run 30-Point Linux Automated Test Suite
         run: xvfb-run --auto-servernum make test
+
+      - name: Run Windows 64-bit Automated Test Suite under Wine
+        run: make test-win64
 
       - name: Run Live Resizing Verification
         run: |
@@ -42,12 +49,15 @@ jobs:
 
       - name: Package Release Distribution
         run: |
-          mkdir -p dist/asmhex-dist
-          cp asmhex README.md LICENSE font.bin dist/asmhex-dist/
-          tar -czvf dist/asmhex-linux-x86_64.tar.gz -C dist/asmhex-dist .
+          mkdir -p dist/asmhex-linux dist/asmhex-win64
+          cp asmhex README.md LICENSE font.bin dist/asmhex-linux/
+          tar -czvf dist/asmhex-linux-x86_64.tar.gz -C dist/asmhex-linux .
+          cp asmhex.exe README.md LICENSE font.bin dist/asmhex-win64/
+          cd dist/asmhex-win64 && zip -r ../asmhex-windows-x86_64.zip . && cd ../..
           cp asmhex dist/asmhex
+          cp asmhex.exe dist/asmhex.exe
           cd dist
-          sha256sum asmhex asmhex-linux-x86_64.tar.gz > SHA256SUMS.txt
+          sha256sum asmhex asmhex.exe asmhex-linux-x86_64.tar.gz asmhex-windows-x86_64.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Upload Build Artifacts
@@ -56,13 +66,15 @@ jobs:
           name: asmhex-binaries
           path: |
             dist/asmhex
+            dist/asmhex.exe
             dist/asmhex-linux-x86_64.tar.gz
+            dist/asmhex-windows-x86_64.zip
             dist/SHA256SUMS.txt
 
   release:
     name: Publish GitHub Release
     needs: build-and-test
-    if: (github.event_name == 'push') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    if: (github.event_name == 'push') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/win64' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -84,6 +96,10 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
             echo "release_name=AsmHex ${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == 'refs/heads/win64' ]]; then
+            echo "tag=win64-preview" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "release_name=AsmHex Windows 64-bit Preview" >> $GITHUB_OUTPUT
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
@@ -100,7 +116,9 @@ jobs:
           generate_release_notes: true
           files: |
             dist/asmhex
+            dist/asmhex.exe
             dist/asmhex-linux-x86_64.tar.gz
+            dist/asmhex-windows-x86_64.zip
             dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

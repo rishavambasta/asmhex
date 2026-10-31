@@ -201,9 +201,20 @@ make
 ./asmhex --screenshot diff_output.ppm file1.bin file2.bin
 ```
 
-### Run Automated Tests (24 Core Functionality Tests)
+### Run Automated Tests (30 Core Functionality Tests)
 ```bash
 make test
+```
+
+### Windows 64-bit Port (Windows 10 / 11)
+AsmHex provides a native Windows 64-bit binary (`asmhex.exe`) powered by the same pure x86_64 assembly core, SIMD renderer, and cryptographic engines, backed by a top-down GDI `CreateDIBSection` zero-copy presentation host.
+
+```bash
+# Build Windows 64-bit binary (asmhex.exe) using MinGW-w64:
+make win64
+
+# Run automated Windows 64-bit test suite under Wine:
+make test-win64
 ```
 
 ### Run Throughput Benchmark
