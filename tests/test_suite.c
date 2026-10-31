@@ -115,6 +115,19 @@ extern int32_t cur_ascii_start_x;
 extern int32_t cur_ascii_end_x;
 extern int32_t cur_char_w;
 extern int32_t row_h;
+extern int32_t cur_scrollbar_x;
+extern int32_t cur_scrollbar_w;
+extern int32_t cur_data_pane_w;
+extern int32_t cur_panel_divider_x;
+extern int32_t cur_inspector_x;
+extern int32_t cur_line_h;
+extern int32_t cur_sec_gap;
+extern int32_t cur_insp_col_val;
+extern int32_t cur_header_h;
+extern int32_t cur_col_hdr_h;
+extern int32_t cur_separator_y;
+extern int32_t cur_status_h;
+extern char insp_h_save_as[];
 extern void editor_zoom_in(void);
 extern void editor_zoom_out(void);
 extern void editor_zoom_reset(void);
@@ -1278,8 +1291,91 @@ int main() {
     file_close();
     remove(save_quit_path);
 
+    // Test 30: 2x Scale Spacing, Non-Overlapping Panels & Save As Shortcuts Display
+    printf("\n[TEST 30] Testing 2x Scale Spacing & Non-Overlapping Inspector Layout...\n");
+    editor_init();
+    assert(font_scale == 1);
+    assert(cur_scrollbar_x == 722);
+    assert(cur_scrollbar_w == 10);
+    assert(cur_data_pane_w == 734);
+    assert(cur_panel_divider_x == 736);
+    assert(cur_inspector_x == 744);
+    assert(cur_line_h == 18);
+    assert(cur_insp_col_val == 144);
+    assert(cur_header_h == 32);
+    assert(cur_col_hdr_h == 20);
+    assert(cur_separator_y == 52);
+    assert(cur_status_h == 72);
+
+    // Zoom to 2x
+    editor_zoom_in();
+    assert(font_scale == 2);
+    assert(cur_scrollbar_x == 1444);
+    assert(cur_scrollbar_w == 20);
+    assert(cur_data_pane_w == 1468);
+    assert(cur_panel_divider_x == 1472);
+    assert(cur_inspector_x == 1488);
+    assert(cur_line_h == 36);
+    assert(cur_insp_col_val == 288);
+    assert(cur_header_h == 64);
+    assert(cur_col_hdr_h == 40);
+    assert(cur_separator_y == 104);
+    assert(cur_status_h == 144);
+
+    // 1. Verify editor pane and right pane have zero overlap
+    assert(cur_ascii_end_x < cur_scrollbar_x);
+    assert(cur_scrollbar_x + cur_scrollbar_w < cur_panel_divider_x);
+    assert(cur_panel_divider_x < cur_inspector_x);
+    printf("  -> Verified 2x panel separation: ASCII end (%d) < Scrollbar (%d) < Divider (%d) < Inspector (%d).\n",
+           cur_ascii_end_x, cur_scrollbar_x, cur_panel_divider_x, cur_inspector_x);
+
+    // 2. Verify vertical line spacing: line height (36) > 2x font height (32)
+    assert(cur_line_h > 32);
+    printf("  -> Verified 2x line spacing: line_h = %d px > 32 px font height (clean 4 px vertical line gap).\n", cur_line_h);
+
+    // 3. Verify horizontal column gap: inspector value offset (288) > longest label (224)
+    assert(cur_insp_col_val >= 288);
+    printf("  -> Verified 2x column spacing: label-value offset = %d px (fits 14-char labels with >64 px padding).\n", cur_insp_col_val);
+
+    // 4. Verify shortcut string contains Ctrl+Shift+S for Save As
+    assert(strcmp(insp_h_save_as, "Ctrl+Shift+S : Save As...") == 0);
+    printf("  -> Verified shortcut string: '%s'.\n", insp_h_save_as);
+
+    // 5. Test rendering frame at 2x scale
+    file_create_scratch();
+    file_ptr[0] = 0x7E;
+    uint32_t *test_fb30 = malloc(1920 * 1080 * 4);
+    assert(test_fb30 != NULL);
+    fb_data = test_fb30;
+    win_w = 1920;
+    win_h = 1080;
+    fb_pitch = 1920 * 4;
+    editor_render();
+
+    // Verify Inspector Title is rendered at cur_inspector_x (1488)
+    int insp_pix = 0;
+    for (int y = 64; y < 104; y++) {
+        for (int x = 1488; x < 1800; x++) {
+            if (test_fb30[y * 1920 + x] != 0x00181825) insp_pix++;
+        }
+    }
+    assert(insp_pix > 200);
+    printf("  -> Verified 2x Inspector Title rendered at x = %d (%d active pixels).\n", cur_inspector_x, insp_pix);
+
+    free(test_fb30);
+    file_close();
+
+    // Zoom back out to 1x
+    editor_zoom_out();
+    assert(font_scale == 1);
+    assert(cur_scrollbar_x == 722);
+    assert(cur_panel_divider_x == 736);
+    assert(cur_inspector_x == 744);
+    assert(cur_line_h == 18);
+    printf("  -> Verified zoom out restored 1x geometry cleanly.\n");
+
     printf("\n========================================================\n");
-    printf("  ALL 29 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 30 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

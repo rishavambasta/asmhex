@@ -10,6 +10,7 @@ extern win_w
 extern win_h
 extern fb_data
 extern fb_pitch
+extern x11_set_window_size
 
 extern file_ptr
 extern file_size
@@ -70,13 +71,13 @@ section .data
     col_hdr_hex:       db "00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f", 0
     col_hdr_ascii:     db "Decoded text", 0
 
-    insp_title:        db "── DATA INSPECTOR ──", 0
+    insp_title:        db "-- DATA INSPECTOR --", 0
     insp_off_h:        db "Offset (Hex):  0x", 0
     insp_off_d:        db "Offset (Dec):  ", 0
     insp_val_h:        db "Value (Hex):   0x", 0
     insp_val_b:        db "Value (Bin):   ", 0
     insp_val_c:        db "Value (Char):  '", 0
-    insp_sec_int:      db "── INTEGERS (LE) ──", 0
+    insp_sec_int:      db "-- INTEGERS (LE) --", 0
     insp_u8:           db "uint8:         ", 0
     insp_s8:           db "int8:          ", 0
     insp_u16:          db "uint16:        ", 0
@@ -84,14 +85,14 @@ section .data
     insp_u32:          db "uint32:        ", 0
     insp_s32:          db "int32:         ", 0
     insp_u64:          db "uint64:        0x", 0
-    insp_sec_file:     db "── FILE STATS ──", 0
+    insp_sec_file:     db "-- FILE STATS --", 0
     insp_size:         db "Size:          ", 0
     insp_pos:          db "Cursor Pos:    ", 0
     insp_mode:         db "Active Pane:   ", 0
     insp_mode_hex:     db "HEX", 0
     insp_mode_asc:     db "ASCII", 0
 
-    insp_sec_diff:      db "── FILE DIFF (F2) ──", 0
+    insp_sec_diff:      db "-- FILE DIFF (F2) --", 0
     insp_diff_cnt:      db "Diffs:     ", 0
     insp_diff_active:   db "Active:    File ", 0
     insp_diff_f1_val:   db "File 1:    0x", 0
@@ -128,24 +129,26 @@ section .data
     str_diff_nav_fmt:   db "[DIFF] Difference %u of %ld at offset 0x%lx  (Press F3: Next Diff, F2: Switch Tab)", 0
     str_diff_gen_fmt:   db "[DIFF MODE] %ld differences  (Cursor at 0x%lx, Press F3 for next diff)", 0
 
-    insp_sec_sel:      db "── SELECTION ──", 0
+    insp_sec_sel:      db "-- SELECTION --", 0
     insp_sel_range:    db "Range:  0x", 0
     insp_sel_dots:     db "..0x", 0
     insp_sel_len:      db "Length: ", 0
     insp_sel_bytes:    db " B (0x", 0
     str_close_paren:   db ")", 0
 
-    insp_sec_hash:     db "── CHECKSUMS (F12) ──", 0
+    insp_sec_hash:     db "-- CHECKSUMS (F12) --", 0
     insp_crc_lbl:      db "CRC-32:  0x", 0
     insp_sha_lbl:      db "SHA-256:", 0
 
-    insp_sec_help:     db "── SHORTCUTS ──", 0
+    insp_sec_help:     db "-- SHORTCUTS --", 0
     insp_h1:           db "Arrows/Mouse : Move cursor", 0
     insp_h_sel:        db "Shift+Arrows : Select range", 0
     insp_h2:           db "PgUp / PgDn  : Scroll page", 0
     insp_h3:           db "Tab / Space  : Switch pane", 0
     insp_h4:           db "0-9, a-f     : Edit nibble", 0
     insp_h5:           db "Ctrl+S       : Save changes", 0
+    global insp_h_save_as
+    insp_h_save_as:    db "Ctrl+Shift+S : Save As...", 0
     insp_h6:           db "Ctrl+Z       : Undo edit", 0
     insp_h7:           db "Ctrl+G       : Goto offset", 0
     insp_h8:           db "Ctrl+F       : Find pattern", 0
@@ -191,17 +194,49 @@ section .data
     global cur_char_w
     global row_h
 
-    cur_offset_x:       dd 16
-    cur_gutter_sep_x:   dd 88
-    cur_hex_start_x:    dd 100
-    cur_byte_spacing:   dd 24
-    cur_group_gap:      dd 12
-    cur_hex_end_x:      dd 488
-    cur_ascii_sep_x:    dd 500
-    cur_ascii_start_x:  dd 516
-    cur_ascii_end_x:    dd 644
-    cur_char_w:         dd 8
-    row_h:              dd 16
+    global cur_scrollbar_x
+    global cur_scrollbar_w
+    global cur_data_pane_w
+    global cur_panel_divider_x
+    global cur_inspector_x
+    global cur_line_h
+    global cur_sec_gap
+    global cur_insp_col_val
+    global cur_sel_col_from
+    global cur_sel_col_dots
+    global cur_sel_col_to
+    global cur_header_h
+    global cur_col_hdr_h
+    global cur_separator_y
+    global cur_status_h
+
+    cur_offset_x:        dd 16
+    cur_gutter_sep_x:    dd 88
+    cur_hex_start_x:     dd 100
+    cur_byte_spacing:    dd 24
+    cur_group_gap:       dd 12
+    cur_hex_end_x:       dd 488
+    cur_ascii_sep_x:     dd 500
+    cur_ascii_start_x:   dd 516
+    cur_ascii_end_x:     dd 644
+    cur_char_w:          dd 8
+    row_h:               dd 16
+
+    cur_scrollbar_x:     dd 722
+    cur_scrollbar_w:     dd 10
+    cur_data_pane_w:     dd 734
+    cur_panel_divider_x: dd 736
+    cur_inspector_x:     dd 744
+    cur_line_h:          dd 18
+    cur_sec_gap:         dd 6
+    cur_insp_col_val:    dd 144
+    cur_sel_col_from:    dd 80
+    cur_sel_col_dots:    dd 152
+    cur_sel_col_to:      dd 184
+    cur_header_h:        dd 32
+    cur_col_hdr_h:       dd 20
+    cur_separator_y:     dd 52
+    cur_status_h:        dd 72
 
     str_gutter_sep:    db "|", 0
     str_quote_nl:      db "'", 0
@@ -370,9 +405,56 @@ editor_update_geometry:
     imul eax, ecx, 644
     mov [rel cur_ascii_end_x], eax
 
+    imul eax, ecx, 722
+    mov [rel cur_scrollbar_x], eax
+
+    imul eax, ecx, 10
+    mov [rel cur_scrollbar_w], eax
+
+    imul eax, ecx, 734
+    mov [rel cur_data_pane_w], eax
+
+    imul eax, ecx, 736
+    mov [rel cur_panel_divider_x], eax
+
+    imul eax, ecx, 744
+    mov [rel cur_inspector_x], eax
+
+    imul eax, ecx, 18
+    mov [rel cur_line_h], eax
+
+    imul eax, ecx, 6
+    mov [rel cur_sec_gap], eax
+
+    imul eax, ecx, 144
+    mov [rel cur_insp_col_val], eax
+
+    imul eax, ecx, 80
+    mov [rel cur_sel_col_from], eax
+
+    imul eax, ecx, 152
+    mov [rel cur_sel_col_dots], eax
+
+    imul eax, ecx, 184
+    mov [rel cur_sel_col_to], eax
+
+    imul eax, ecx, 32
+    mov [rel cur_header_h], eax
+
+    imul eax, ecx, 20
+    mov [rel cur_col_hdr_h], eax
+
+    imul eax, ecx, 52
+    mov [rel cur_separator_y], eax
+
+    imul eax, ecx, 72
+    mov [rel cur_status_h], eax
+
     ; 3. Compute dynamic visible_rows and visible_bytes
     mov eax, [rel win_h]
-    sub eax, SEPARATOR_Y + STATUS_H + 16
+    sub eax, [rel cur_separator_y]
+    sub eax, [rel cur_status_h]
+    sub eax, 16
     mov edx, [rel row_h]
     cmp eax, edx
     jge .ug_calc
@@ -398,6 +480,9 @@ editor_zoom_in:
     inc dword [rel font_scale]
     call editor_update_geometry
     call editor_ensure_visible
+    mov edi, 1920
+    mov esi, 1040
+    call x11_set_window_size
 .zi_done:
     ret
 
@@ -408,6 +493,9 @@ editor_zoom_out:
     dec dword [rel font_scale]
     call editor_update_geometry
     call editor_ensure_visible
+    mov edi, 1040
+    mov esi, 720
+    call x11_set_window_size
 .zo_done:
     ret
 
@@ -416,6 +504,9 @@ editor_zoom_reset:
     mov dword [rel font_scale], 1
     call editor_update_geometry
     call editor_ensure_visible
+    mov edi, 1040
+    mov esi, 720
+    call x11_set_window_size
     ret
 
 global editor_get_visible_rows
@@ -461,7 +552,8 @@ editor_init:
     mov dword [rel is_dragging_scrollbar], 0
     mov dword [rel drag_mouse_y], 0
     mov qword [rel drag_scroll_orig], 0
-    mov dword [rel thumb_y], SEPARATOR_Y
+    mov eax, [rel cur_separator_y]
+    mov dword [rel thumb_y], eax
     mov dword [rel thumb_h], SCROLL_THUMB_MIN_H
     mov dword [rel last_checksum_valid], 0
     mov dword [rel last_crc32], 0
@@ -2151,16 +2243,20 @@ editor_handle_click:
     mov r12d, edi                     ; click_x
     mov r13d, esi                     ; click_y
 
-    ; 0A. Check Header Tabs (y < HEADER_H)
-    cmp r13d, HEADER_H
+    ; 0A. Check Header Tabs (y < cur_header_h)
+    cmp r13d, [rel cur_header_h]
     jge .not_header_area
     cmp dword [rel is_diff_mode], 1
     jne .click_done
 
-    ; Tab 1 click: x in [110, 310]
-    cmp r12d, 110
+    ; Tab 1 click: x in [110 * font_scale, 310 * font_scale]
+    mov eax, 110
+    imul eax, [rel font_scale]
+    cmp r12d, eax
     jl .click_done
-    cmp r12d, 310
+    mov eax, 310
+    imul eax, [rel font_scale]
+    cmp r12d, eax
     jge .check_tab2_click
     cmp dword [rel diff_active_file], 0
     je .click_done
@@ -2172,9 +2268,13 @@ editor_handle_click:
     jmp .click_done
 
 .check_tab2_click:
-    cmp r12d, 320
+    mov eax, 320
+    imul eax, [rel font_scale]
+    cmp r12d, eax
     jl .click_done
-    cmp r12d, 520
+    mov eax, 520
+    imul eax, [rel font_scale]
+    cmp r12d, eax
     jge .click_done
     cmp dword [rel diff_active_file], 1
     je .click_done
@@ -2186,23 +2286,27 @@ editor_handle_click:
     jmp .click_done
 
 .not_header_area:
-    ; 0B. Check Bottom Status Bar Diff Chips (y >= win_h - STATUS_H)
+    ; 0B. Check Bottom Status Bar Diff Chips (y >= win_h - cur_status_h)
     mov eax, [rel win_h]
-    sub eax, STATUS_H
+    sub eax, [rel cur_status_h]
     cmp r13d, eax
     jl .check_scrollbar
 
     cmp dword [rel is_diff_mode], 1
     jne .click_done
 
-    ; Check if within Line 2 (diff list strip: y in [win_h - 48, win_h - 26])
-    mov eax, [rel win_h]
-    sub eax, 48
-    cmp r13d, eax
+    ; Check if within Line 2 (diff list strip: y in [win_h - 48*fs, win_h - 26*fs])
+    mov eax, 48
+    imul eax, [rel font_scale]
+    mov edx, [rel win_h]
+    sub edx, eax
+    cmp r13d, edx
     jl .click_done
-    mov eax, [rel win_h]
-    sub eax, 26
-    cmp r13d, eax
+    mov eax, 26
+    imul eax, [rel font_scale]
+    mov edx, [rel win_h]
+    sub edx, eax
+    cmp r13d, edx
     jge .click_done
 
     ; Search clicked chip
@@ -2235,14 +2339,16 @@ editor_handle_click:
 
     ; 1. Check Scrollbar Track Hit
 .check_scrollbar:
-    cmp r12d, SCROLLBAR_X
+    cmp r12d, [rel cur_scrollbar_x]
     jl .not_scrollbar
-    cmp r12d, SCROLLBAR_X + SCROLLBAR_W
+    mov eax, [rel cur_scrollbar_x]
+    add eax, [rel cur_scrollbar_w]
+    cmp r12d, eax
     jge .not_scrollbar
-    cmp r13d, SEPARATOR_Y
+    cmp r13d, [rel cur_separator_y]
     jl .not_scrollbar
     mov eax, [rel win_h]
-    sub eax, STATUS_H
+    sub eax, [rel cur_status_h]
     cmp r13d, eax
     jge .not_scrollbar
 
@@ -2273,17 +2379,18 @@ editor_handle_click:
     jmp .click_done
 
 .not_scrollbar:
-    ; 2. Check Data Rows Area (SEPARATOR_Y < y < win_h - STATUS_H)
-    cmp r13d, SEPARATOR_Y
+    ; 2. Check Data Rows Area (cur_separator_y < y < win_h - cur_status_h)
+    cmp r13d, [rel cur_separator_y]
     jle .click_done
     mov eax, [rel win_h]
-    sub eax, STATUS_H
+    sub eax, [rel cur_status_h]
     cmp r13d, eax
     jge .click_done
 
-    ; row_idx = (y - (SEPARATOR_Y + 4)) / row_h
+    ; row_idx = (y - (cur_separator_y + 4)) / row_h
     mov eax, r13d
-    sub eax, SEPARATOR_Y + 4
+    sub eax, [rel cur_separator_y]
+    sub eax, 4
     cmp eax, 0
     jl .click_done
     xor edx, edx
@@ -2404,10 +2511,10 @@ editor_handle_mouse_move:
     cmp dword [rel is_dragging_scrollbar], 1
     jne .check_selecting
 
-    ; track_h = win_h - STATUS_H - SEPARATOR_Y
+    ; track_h = win_h - cur_status_h - cur_separator_y
     mov eax, [rel win_h]
-    sub eax, STATUS_H
-    sub eax, SEPARATOR_Y
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_separator_y]
     mov ebx, eax                      ; ebx = track_h
 
     mov ecx, [rel thumb_h]
@@ -2456,7 +2563,7 @@ editor_handle_mouse_move:
     jne .move_done
 
     ; Auto-scroll check
-    cmp r13d, SEPARATOR_Y
+    cmp r13d, [rel cur_separator_y]
     jge .check_sc_down
     ; Mouse is above grid: scroll up
     mov rax, [rel scroll_offset]
@@ -2471,7 +2578,7 @@ editor_handle_mouse_move:
 
 .check_sc_down:
     mov eax, [rel win_h]
-    sub eax, STATUS_H
+    sub eax, [rel cur_status_h]
     cmp r13d, eax
     jl .calc_sel_offset
     ; Mouse is below grid: scroll down
@@ -2483,9 +2590,10 @@ editor_handle_mouse_move:
     add qword [rel scroll_offset], 16
 
 .calc_sel_offset:
-    ; Calculate row: (y - (SEPARATOR_Y + 4)) / row_h
+    ; Calculate row: (y - (cur_separator_y + 4)) / row_h
     mov eax, r13d
-    sub eax, SEPARATOR_Y + 4
+    sub eax, [rel cur_separator_y]
+    sub eax, 4
     test eax, eax
     jns .row_not_neg
     xor eax, eax
@@ -2640,12 +2748,13 @@ render_scrollbar:
     push r13
     sub rsp, 8
 
-    ; Track dimensions: (SCROLLBAR_X, SEPARATOR_Y, SCROLLBAR_W, track_h)
-    mov edi, SCROLLBAR_X
-    mov esi, SEPARATOR_Y
-    mov edx, SCROLLBAR_W
+    ; Track dimensions: (cur_scrollbar_x, cur_separator_y, cur_scrollbar_w, track_h)
+    mov edi, [rel cur_scrollbar_x]
+    mov esi, [rel cur_separator_y]
+    mov edx, [rel cur_scrollbar_w]
     mov ecx, [rel win_h]
-    sub ecx, SEPARATOR_Y + STATUS_H   ; track_h
+    sub ecx, [rel cur_separator_y]
+    sub ecx, [rel cur_status_h]       ; track_h
     mov r8d, COLOR_SCROLL_TRACK
     mov r12d, ecx                     ; r12d = track_h
     call draw_rect
@@ -2662,9 +2771,11 @@ render_scrollbar:
     imul eax, r13d
     xor edx, edx
     div r8d
-    cmp eax, SCROLL_THUMB_MIN_H
+    mov ecx, [rel cur_sec_gap]
+    shl ecx, 2                        ; min thumb height = 24 * font_scale
+    cmp eax, ecx
     jge .sb_h_min_ok
-    mov eax, SCROLL_THUMB_MIN_H
+    mov eax, ecx
 .sb_h_min_ok:
     cmp eax, r12d
     jle .sb_h_ok
@@ -2684,23 +2795,26 @@ render_scrollbar:
     ; avail = track_h - th_h
     mov edx, r12d
     sub edx, eax                      ; edx = avail
-    ; th_y = SEPARATOR_Y + (avail * scroll_offset) / max_sc
+    ; th_y = cur_separator_y + (avail * scroll_offset) / max_sc
     mov eax, edx
     imul rax, [rel scroll_offset]
     xor edx, edx
     div r9
-    add eax, SEPARATOR_Y
+    add eax, [rel cur_separator_y]
     mov [rel thumb_y], eax
     jmp .sb_draw_thumb
 
 .sb_full_page:
     mov [rel thumb_h], r12d
-    mov dword [rel thumb_y], SEPARATOR_Y
+    mov eax, [rel cur_separator_y]
+    mov dword [rel thumb_y], eax
 
 .sb_draw_thumb:
-    mov edi, SCROLLBAR_X + 1
+    mov edi, [rel cur_scrollbar_x]
+    inc edi
     mov esi, [rel thumb_y]
-    mov edx, SCROLLBAR_W - 2
+    mov edx, [rel cur_scrollbar_w]
+    sub edx, 2
     mov ecx, [rel thumb_h]
     mov r8d, COLOR_SCROLL_THUMB
     cmp dword [rel is_dragging_scrollbar], 1
@@ -3451,6 +3565,7 @@ editor_diff_flip:
 ; ------------------------------------------------------------------------------
 ; render_diff_inspector:
 ; Displays Diff statistics, active file, File 1 vs File 2 byte values and match status
+; edi = current y coordinate; returns eax = updated y coordinate
 ; ------------------------------------------------------------------------------
 render_diff_inspector:
     push rbp
@@ -3462,23 +3577,27 @@ render_diff_inspector:
     push r15
     sub rsp, 8
 
+    mov r14d, edi                     ; r14d = starting y
+
     cmp dword [rel is_diff_mode], 1
     jne .rdi_done
 
     mov rbx, [rel cursor_offset]
 
     ; Section Title: ── FILE DIFF (F2) ──
+    add r14d, [rel cur_sec_gap]
     lea rdi, [rel insp_sec_diff]
-    mov esi, INSPECTOR_X
-    mov edx, 328
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Line 1: Diffs count
     lea rdi, [rel insp_diff_cnt]
-    mov esi, INSPECTOR_X
-    mov edx, 348
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -3488,8 +3607,9 @@ render_diff_inspector:
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 88
-    mov edx, 348
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_DIFF_FG
     cmp qword [rel diff_count], 0
     jne .draw_diff_cnt
@@ -3497,11 +3617,12 @@ render_diff_inspector:
 .draw_diff_cnt:
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Line 2: Active file (1 or 2)
     lea rdi, [rel insp_diff_active]
-    mov esi, INSPECTOR_X
-    mov edx, 366
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -3514,16 +3635,18 @@ render_diff_inspector:
 .draw_act_file:
     mov byte [rdi + 1], 0
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 104
-    mov edx, 366
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Line 3: File 1 byte value at cursor
     lea rdi, [rel insp_diff_f1_val]
-    mov esi, INSPECTOR_X
-    mov edx, 384
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -3563,16 +3686,18 @@ render_diff_inspector:
 
 .draw_f1_val:
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 88
-    mov edx, 384
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_DIFF_PEER
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Line 4: File 2 byte value at cursor
     lea rdi, [rel insp_diff_f2_val]
-    mov esi, INSPECTOR_X
-    mov edx, 402
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -3612,16 +3737,18 @@ render_diff_inspector:
 
 .draw_f2_val:
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 88
-    mov edx, 402
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_DIFF_PEER
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Line 5: Match status (MISMATCH [!=] or IDENTICAL [==])
     lea rdi, [rel insp_diff_status]
-    mov esi, INSPECTOR_X
-    mov edx, 420
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -3643,12 +3770,15 @@ render_diff_inspector:
     mov ecx, COLOR_DIFF_FG
 
 .draw_match_st:
-    mov esi, INSPECTOR_X + 88
-    mov edx, 420
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
 .rdi_done:
+    mov eax, r14d
     add rsp, 8
     pop r15
     pop r14
@@ -3661,6 +3791,7 @@ render_diff_inspector:
 ; ------------------------------------------------------------------------------
 ; render_selection_inspector:
 ; Displays Selection Range, Length, and F12 Checksums in Inspector panel
+; edi = current y coordinate; returns eax = updated y coordinate
 ; ------------------------------------------------------------------------------
 render_selection_inspector:
     push rbp
@@ -3670,23 +3801,21 @@ render_selection_inspector:
     push r13
     push r14
     push r15
-    sub rsp, 8                        ; 16-byte stack alignment (40 + 8 = 48)
+    sub rsp, 8
+
+    mov r14d, edi                     ; r14d = starting y
 
     cmp dword [rel has_selection], 1
     jne .check_checksum_display
 
-    mov r14d, 328
-    cmp dword [rel is_diff_mode], 1
-    jne .draw_sel_hdr
-    mov r14d, 442
-
-.draw_sel_hdr:
+    add r14d, [rel cur_sec_gap]
     lea rdi, [rel insp_sec_sel]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     mov r8, [rel sel_start]
     mov r9, [rel sel_end]
@@ -3697,9 +3826,8 @@ render_selection_inspector:
     mov r12, r8                       ; min
     mov r13, r9                       ; max
 
-    add r14d, 18
     lea rdi, [rel insp_sel_range]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
@@ -3710,14 +3838,16 @@ render_selection_inspector:
     call format_hex_dword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 80
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_sel_col_from]
     mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
     lea rdi, [rel insp_sel_dots]
-    mov esi, INSPECTOR_X + 144
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_sel_col_dots]
     mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
@@ -3728,15 +3858,16 @@ render_selection_inspector:
     call format_hex_dword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 176
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_sel_col_to]
     mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
-    add r14d, 18
     lea rdi, [rel insp_sel_len]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
@@ -3752,39 +3883,31 @@ render_selection_inspector:
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 64
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_sel_col_from]
     mov edx, r14d
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
 .check_checksum_display:
     cmp dword [rel last_checksum_valid], 1
     jne .rsi_done
 
-    mov r14d, 328
-    cmp dword [rel is_diff_mode], 1
-    jne .chk_cs_sel
-    mov r14d, 442
-
-.chk_cs_sel:
-    cmp dword [rel has_selection], 1
-    jne .draw_checksum_block
-    add r14d, 46                      ; Place below selection info
-
-.draw_checksum_block:
+    add r14d, [rel cur_sec_gap]
     ; Section Header: ── CHECKSUMS (F12) ──
     lea rdi, [rel insp_sec_hash]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; CRC-32 Label
-    add r14d, 18
     lea rdi, [rel insp_crc_lbl]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
@@ -3796,23 +3919,24 @@ render_selection_inspector:
     call format_hex_dword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 88
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
     mov edx, r14d
     mov ecx, COLOR_HEX_ASCII
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; SHA-256 Label
-    add r14d, 18
     lea rdi, [rel insp_sha_lbl]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; First 32 hex characters
-    add r14d, 16
     lea rsi, [rel last_sha256_hex]
     lea rdi, [rel str_buf_1]
     mov ecx, 32
@@ -3824,14 +3948,14 @@ render_selection_inspector:
     mov byte [rel str_buf_1 + 32], 0
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_HEX_SPECIAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Second 32 hex characters
-    add r14d, 16
     lea rsi, [rel last_sha256_hex + 32]
     lea rdi, [rel str_buf_1]
     mov ecx, 32
@@ -3843,13 +3967,15 @@ render_selection_inspector:
     mov byte [rel str_buf_1 + 32], 0
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_HEX_SPECIAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
 .rsi_done:
+    mov eax, r14d
     add rsp, 8
     pop r15
     pop r14
@@ -4058,36 +4184,54 @@ render_header_tabs:
     ; Tab 1 Active
     ; Draw background
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 200
+    imul edx, [rel font_scale]
     mov ecx, 26
+    imul ecx, [rel font_scale]
     mov r8d, COLOR_TAB_ACTIVE_BG
     call draw_rect
 
     ; Draw top accent stripe (2px)
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 200
+    imul edx, [rel font_scale]
     mov ecx, 2
+    imul ecx, [rel font_scale]
     mov r8d, COLOR_TAB_ACCENT
     call draw_rect
 
     ; Borders
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 200
+    imul esi, [rel font_scale]
     mov edx, 3
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_hline                   ; top
 
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 26
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline                   ; left
 
-    mov edi, 309
+    mov edi, 310
+    imul edi, [rel font_scale]
+    dec edi
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 26
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline                   ; right
 
@@ -4101,7 +4245,9 @@ render_header_tabs:
 
     lea rdi, [rsp]
     mov esi, 120
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_TAB_ACTIVE_BG
     call draw_string
@@ -4110,34 +4256,51 @@ render_header_tabs:
 .tab1_inactive:
     ; Tab 1 Inactive
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 5
+    imul esi, [rel font_scale]
     mov edx, 200
+    imul edx, [rel font_scale]
     mov ecx, 24
+    imul ecx, [rel font_scale]
     mov r8d, COLOR_TAB_INACTIVE_BG
     call draw_rect
 
     ; Borders
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 200
+    imul esi, [rel font_scale]
     mov edx, 5
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_hline
 
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 200
+    imul esi, [rel font_scale]
     mov edx, 28
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_hline
 
     mov edi, 110
+    imul edi, [rel font_scale]
     mov esi, 5
+    imul esi, [rel font_scale]
     mov edx, 24
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline
 
-    mov edi, 309
+    mov edi, 310
+    imul edi, [rel font_scale]
+    dec edi
     mov esi, 5
+    imul esi, [rel font_scale]
     mov edx, 24
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline
 
@@ -4151,7 +4314,9 @@ render_header_tabs:
 
     lea rdi, [rsp]
     mov esi, 120
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_TAB_INACTIVE_BG
     call draw_string
@@ -4168,34 +4333,52 @@ render_header_tabs:
 
     ; Tab 2 Active
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 200
+    imul edx, [rel font_scale]
     mov ecx, 26
+    imul ecx, [rel font_scale]
     mov r8d, COLOR_TAB_ACTIVE_BG
     call draw_rect
 
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 200
+    imul edx, [rel font_scale]
     mov ecx, 2
+    imul ecx, [rel font_scale]
     mov r8d, COLOR_TAB_ACCENT
     call draw_rect
 
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 200
+    imul esi, [rel font_scale]
     mov edx, 3
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_hline
 
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 26
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline
 
-    mov edi, 519
+    mov edi, 520
+    imul edi, [rel font_scale]
+    dec edi
     mov esi, 3
+    imul esi, [rel font_scale]
     mov edx, 26
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline
 
@@ -4208,7 +4391,9 @@ render_header_tabs:
 
     lea rdi, [rsp]
     mov esi, 330
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_TAB_ACTIVE_BG
     call draw_string
@@ -4217,33 +4402,50 @@ render_header_tabs:
 .tab2_inactive:
     ; Tab 2 Inactive
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 5
+    imul esi, [rel font_scale]
     mov edx, 200
+    imul edx, [rel font_scale]
     mov ecx, 24
+    imul ecx, [rel font_scale]
     mov r8d, COLOR_TAB_INACTIVE_BG
     call draw_rect
 
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 200
+    imul esi, [rel font_scale]
     mov edx, 5
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_hline
 
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 200
+    imul esi, [rel font_scale]
     mov edx, 28
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_hline
 
     mov edi, 320
+    imul edi, [rel font_scale]
     mov esi, 5
+    imul esi, [rel font_scale]
     mov edx, 24
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline
 
-    mov edi, 519
+    mov edi, 520
+    imul edi, [rel font_scale]
+    dec edi
     mov esi, 5
+    imul esi, [rel font_scale]
     mov edx, 24
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TAB_BORDER
     call draw_vline
 
@@ -4256,27 +4458,34 @@ render_header_tabs:
 
     lea rdi, [rsp]
     mov esi, 330
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_TAB_INACTIVE_BG
     call draw_string
 
 .draw_header_hints:
-    ; Draw badge [DIFF MODE] at x = 535
+    ; Draw badge [DIFF MODE] at x = 535 * font_scale
     lea rdi, [rel tag_diff]
     mov esi, 535
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_DIFF_FG
     mov r8d, COLOR_DIFF_BG
     call draw_string
 
-    ; Draw hints at x = 660 (if win_w >= 880)
-    mov eax, [rel win_w]
-    cmp eax, 880
+    ; Draw hints at x = 660 * font_scale (if win_w >= 880 * font_scale)
+    mov eax, 880
+    imul eax, [rel font_scale]
+    cmp [rel win_w], eax
     jl .rht_done
     lea rdi, [rel str_diff_hdr_hint]
     mov esi, 660
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
@@ -4307,31 +4516,42 @@ render_diff_bottom_bar:
     sub rsp, 56                       ; stack buffer for formatting
 
     mov r12d, [rel win_h]
-    sub r12d, STATUS_H                ; r12d = status_bar_y (win_h - 72)
+    sub r12d, [rel cur_status_h]
 
-    ; --- Line 1: Status summary message (at y = r12d + 6) ---
+    ; --- Line 1: Status summary message ---
     lea rdi, [rel status_msg_buf]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 6
+    mov eax, 6
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, [rel status_msg_color]
     mov r8d, COLOR_STATUS_BG
     call draw_string
 
     ; Hairline divider above diff list
     mov edi, 16
+    imul edi, [rel font_scale]
     mov esi, [rel win_w]
-    sub esi, 32
+    mov eax, 32
+    imul eax, [rel font_scale]
+    sub esi, eax
     mov edx, r12d
-    add edx, 24
+    mov eax, 24
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_BORDER
     call draw_hline
 
-    ; --- Line 2: Diff offsets listing (at y = r12d + 27) ---
+    ; --- Line 2: Diff offsets listing ---
     mov dword [rel diff_chip_count], 0
-    mov r13d, 16                      ; r13d = cur_x
+    mov r13d, 16
+    imul r13d, [rel font_scale]       ; r13d = cur_x
     mov r14d, r12d
-    add r14d, 27                      ; r14d = cur_y
+    mov eax, 27
+    imul eax, [rel font_scale]
+    add r14d, eax                     ; r14d = cur_y
 
     ; Draw "Diffs ("
     lea rdi, [rel str_diff_list_lbl]
@@ -4340,7 +4560,9 @@ render_diff_bottom_bar:
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_STATUS_BG
     call draw_string
-    add r13d, 56                      ; 7 * 8
+    mov eax, 7
+    imul eax, [rel cur_char_w]
+    add r13d, eax
 
     ; Draw count + "): "
     lea rdi, [rsp]
@@ -4364,9 +4586,10 @@ render_diff_bottom_bar:
     ; Measure length of count string
     lea rdi, [rsp]
     call strlen wrt ..plt
-    shl eax, 3                        ; len * 8
+    imul eax, [rel cur_char_w]
     add r13d, eax
-    add r13d, 8                       ; gap
+    mov eax, [rel cur_char_w]
+    add r13d, eax                     ; gap
 
     ; Check if 0 diffs
     cmp dword [rel diff_list_count], 0
@@ -4422,16 +4645,20 @@ render_diff_bottom_bar:
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string
-    add r13d, 32                      ; 4 * 8
+    mov eax, 4
+    imul eax, [rel cur_char_w]
+    add r13d, eax
 
 .rdb_loop_chips:
     test r15d, r15d
     jz .rdb_after_chips
 
-    ; Check if window bounds exceeded (leave 90px margin on right)
-    mov eax, [rel win_w]
-    sub eax, 90
-    cmp r13d, eax
+    ; Check if window bounds exceeded (leave margin on right)
+    mov eax, 90
+    imul eax, [rel font_scale]
+    mov edx, [rel win_w]
+    sub edx, eax
+    cmp r13d, edx
     jge .rdb_after_chips
 
     ; rbx = current diff_idx
@@ -4453,8 +4680,8 @@ render_diff_bottom_bar:
     ; Measure width
     lea rdi, [rsp]
     call strlen wrt ..plt
-    mov r8d, eax
-    shl r8d, 3                        ; chip_width
+    imul eax, [rel cur_char_w]
+    mov r8d, eax                      ; chip_width
 
     ; Store chip info for click
     mov edx, [rel diff_chip_count]
@@ -4476,7 +4703,7 @@ render_diff_bottom_bar:
     mov esi, r14d
     dec esi
     lea edx, [r8d + 2]
-    mov ecx, 18
+    mov ecx, [rel cur_line_h]
     mov r8d, COLOR_TAB_ACTIVE_BG
     call draw_rect
 
@@ -4490,9 +4717,11 @@ render_diff_bottom_bar:
 
     lea rdi, [rsp]
     call strlen wrt ..plt
-    shl eax, 3
+    imul eax, [rel cur_char_w]
     add r13d, eax
-    add r13d, 12                      ; gap
+    mov eax, 12
+    imul eax, [rel font_scale]
+    add r13d, eax                     ; gap
     jmp .rdb_next_chip
 
 .rdb_chip_inactive:
@@ -4506,8 +4735,8 @@ render_diff_bottom_bar:
 
     lea rdi, [rsp]
     call strlen wrt ..plt
-    mov r8d, eax
-    shl r8d, 3                        ; chip_width
+    imul eax, [rel cur_char_w]
+    mov r8d, eax                      ; chip_width
 
     mov edx, [rel diff_chip_count]
     cmp edx, 16
@@ -4531,9 +4760,11 @@ render_diff_bottom_bar:
 
     lea rdi, [rsp]
     call strlen wrt ..plt
-    shl eax, 3
+    imul eax, [rel cur_char_w]
     add r13d, eax
-    add r13d, 12                      ; gap
+    mov eax, 12
+    imul eax, [rel font_scale]
+    add r13d, eax                     ; gap
 
 .rdb_next_chip:
     inc ebx
@@ -4541,7 +4772,6 @@ render_diff_bottom_bar:
     jmp .rdb_loop_chips
 
 .rdb_after_chips:
-    ; If more diffs remain past what was drawn
     cmp ebx, [rel diff_list_count]
     jae .rdb_line3
     lea rdi, [rel str_more_diffs]
@@ -4552,11 +4782,14 @@ render_diff_bottom_bar:
     call draw_string
 
 .rdb_line3:
-    ; --- Line 3: Shortcuts / Cheat Sheet (at y = r12d + 50) ---
+    ; --- Line 3: Shortcuts / Cheat Sheet ---
     lea rdi, [rel status_help_bar_diff_tabs]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 50
+    mov eax, 50
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -4586,50 +4819,52 @@ editor_render:
     sub rsp, 8                        ; 16-byte stack alignment (40 + 8 = 48)
 
     ; 1. Draw Panel Backgrounds
-    ; Top Header: (0, 0, win_w, HEADER_H)
+    ; Top Header: (0, 0, win_w, cur_header_h)
     xor edi, edi
     xor esi, esi
     mov edx, [rel win_w]
-    mov ecx, HEADER_H
+    mov ecx, [rel cur_header_h]
     mov r8d, COLOR_HEADER_BG
     call draw_rect
 
-    ; Column Header bar background (0, HEADER_H, win_w, COL_HDR_H)
+    ; Column Header bar background (0, cur_header_h, win_w, cur_col_hdr_h)
     xor edi, edi
-    mov esi, HEADER_H
+    mov esi, [rel cur_header_h]
     mov edx, [rel win_w]
-    mov ecx, COL_HDR_H
+    mov ecx, [rel cur_col_hdr_h]
     mov r8d, COLOR_HEADER_BG
     call draw_rect
 
-    ; Data Pane background: (0, SEPARATOR_Y, DATA_PANE_W, win_h - SEPARATOR_Y - STATUS_H)
+    ; Data Pane background: (0, cur_separator_y, cur_data_pane_w, win_h - cur_separator_y - cur_status_h)
     xor edi, edi
-    mov esi, SEPARATOR_Y
-    mov edx, DATA_PANE_W
+    mov esi, [rel cur_separator_y]
+    mov edx, [rel cur_data_pane_w]
     mov ecx, [rel win_h]
-    sub ecx, SEPARATOR_Y + STATUS_H
+    sub ecx, [rel cur_separator_y]
+    sub ecx, [rel cur_status_h]
     mov r8d, COLOR_BG
     call draw_rect
 
-    ; Inspector Pane background: (DATA_PANE_W, SEPARATOR_Y, win_w - DATA_PANE_W, ...)
+    ; Inspector Pane background: (cur_data_pane_w, cur_separator_y, win_w - cur_data_pane_w, ...)
     mov edx, [rel win_w]
-    cmp edx, DATA_PANE_W
+    cmp edx, [rel cur_data_pane_w]
     jle .skip_insp_bg
-    sub edx, DATA_PANE_W
-    mov edi, DATA_PANE_W
-    mov esi, SEPARATOR_Y
+    sub edx, [rel cur_data_pane_w]
+    mov edi, [rel cur_data_pane_w]
+    mov esi, [rel cur_separator_y]
     mov ecx, [rel win_h]
-    sub ecx, SEPARATOR_Y + STATUS_H
+    sub ecx, [rel cur_separator_y]
+    sub ecx, [rel cur_status_h]
     mov r8d, COLOR_PANEL_BG
     call draw_rect
 .skip_insp_bg:
 
-    ; Status Bar background: (0, win_h - STATUS_H, win_w, STATUS_H)
+    ; Status Bar background: (0, win_h - cur_status_h, win_w, cur_status_h)
     xor edi, edi
     mov esi, [rel win_h]
-    sub esi, STATUS_H
+    sub esi, [rel cur_status_h]
     mov edx, [rel win_w]
-    mov ecx, STATUS_H
+    mov ecx, [rel cur_status_h]
     mov r8d, COLOR_STATUS_BG
     call draw_rect
 
@@ -4637,7 +4872,7 @@ editor_render:
     ; Horizontal under column header
     xor edi, edi
     mov esi, [rel win_w]
-    mov edx, SEPARATOR_Y
+    mov edx, [rel cur_separator_y]
     mov ecx, COLOR_BORDER
     call draw_hline
 
@@ -4645,15 +4880,15 @@ editor_render:
     xor edi, edi
     mov esi, [rel win_w]
     mov edx, [rel win_h]
-    sub edx, STATUS_H
+    sub edx, [rel cur_status_h]
     mov ecx, COLOR_BORDER
     call draw_hline
 
     ; Vertical between data pane and inspector pane
-    mov edi, PANEL_DIVIDER_X
-    mov esi, HEADER_H
+    mov edi, [rel cur_panel_divider_x]
+    mov esi, [rel cur_header_h]
     mov edx, [rel win_h]
-    sub edx, STATUS_H
+    sub edx, [rel cur_status_h]
     mov ecx, COLOR_BORDER
     call draw_vline
 
@@ -4662,7 +4897,9 @@ editor_render:
     ; --------------------------------------------------------------------------
     lea rdi, [rel title_str]
     mov esi, 12
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_HEADER_BG
     call draw_string
@@ -4676,30 +4913,38 @@ editor_render:
 .single_file_hdr:
     lea rdi, [rel sub_title]
     mov esi, 140
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
-    ; Draw file path at x = 450
+    ; Draw file path at x = 450 * font_scale
     lea rdi, [rel file_path]
     mov esi, 450
+    imul esi, [rel font_scale]
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_TEXT_NORMAL
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
     ; Draw tags ([MODIFIED], [READ-ONLY], [SCRATCH])
     mov r12d, 820
+    imul r12d, [rel font_scale]
     cmp dword [rel is_dirty], 1
     jne .chk_ro_tag
     lea rdi, [rel tag_mod]
     mov esi, r12d
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_MODIFIED
     mov r8d, COLOR_HEADER_BG
     call draw_string
-    add r12d, 100
+    mov eax, 100
+    imul eax, [rel font_scale]
+    add r12d, eax
 
 .chk_ro_tag:
     cmp dword [rel is_readonly], 1
@@ -4707,10 +4952,13 @@ editor_render:
     lea rdi, [rel tag_ro]
     mov esi, r12d
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_HEX_CTRL
     mov r8d, COLOR_HEADER_BG
     call draw_string
-    add r12d, 100
+    mov eax, 100
+    imul eax, [rel font_scale]
+    add r12d, eax
 
 .chk_scratch_tag:
     cmp dword [rel is_scratch], 1
@@ -4718,6 +4966,7 @@ editor_render:
     lea rdi, [rel tag_scratch]
     mov esi, r12d
     mov edx, 8
+    imul edx, [rel font_scale]
     mov ecx, COLOR_OFFSET
     mov r8d, COLOR_HEADER_BG
     call draw_string
@@ -4726,23 +4975,30 @@ editor_render:
     ; --------------------------------------------------------------------------
     ; 3. Render Column Header Bar
     ; --------------------------------------------------------------------------
+    mov edx, [rel cur_header_h]
+    add edx, 4
+
     lea rdi, [rel col_hdr_offset]
     mov esi, [rel cur_offset_x]
-    mov edx, 34
+    ; edx is set
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
+    mov edx, [rel cur_header_h]
+    add edx, 4
     lea rdi, [rel col_hdr_hex]
     mov esi, [rel cur_hex_start_x]
-    mov edx, 34
+    ; edx is set
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
 
+    mov edx, [rel cur_header_h]
+    add edx, 4
     lea rdi, [rel col_hdr_ascii]
     mov esi, [rel cur_ascii_start_x]
-    mov edx, 34
+    ; edx is set
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_HEADER_BG
     call draw_string
@@ -4780,10 +5036,11 @@ editor_render:
 
 .draw_this_row:
 
-    ; row_y = SEPARATOR_Y + 6 + r12 * row_h
+    ; row_y = cur_separator_y + 4 + r12 * row_h
     mov eax, r12d
     imul eax, [rel row_h]
-    add eax, SEPARATOR_Y + 6
+    add eax, [rel cur_separator_y]
+    add eax, 4
     mov r14d, eax                     ; r14d = row_y
 
     ; A. Draw 8-hex-digit (32-bit / 4-byte) Offset
@@ -5221,11 +5478,15 @@ editor_render:
     ; 5. Render Data Inspector Pane
     ; --------------------------------------------------------------------------
     lea rdi, [rel insp_title]
-    mov esi, INSPECTOR_X
-    mov edx, 34
+    mov esi, [rel cur_inspector_x]
+    mov edx, [rel cur_header_h]
+    add edx, 4
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_HEADER_BG
     call draw_string
+
+    mov r14d, [rel cur_separator_y]
+    add r14d, [rel cur_sec_gap]
 
     ; Check if cursor_offset is within file
     mov rbx, [rel cursor_offset]
@@ -5234,8 +5495,8 @@ editor_render:
 
     ; Inspector Offset (Hex)
     lea rdi, [rel insp_off_h]
-    mov esi, INSPECTOR_X
-    mov edx, 56
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5245,16 +5506,18 @@ editor_render:
     call format_hex_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 136
-    mov edx, 56
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Inspector Offset (Dec)
     lea rdi, [rel insp_off_d]
-    mov esi, INSPECTOR_X
-    mov edx, 74
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5264,11 +5527,13 @@ editor_render:
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 74
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Read byte value at cursor
     mov rax, [rel file_ptr]
@@ -5276,8 +5541,8 @@ editor_render:
 
     ; Value (Hex): 0xXX
     lea rdi, [rel insp_val_h]
-    mov esi, INSPECTOR_X
-    mov edx, 92
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5289,16 +5554,18 @@ editor_render:
     mov byte [rel str_buf_1 + 2], 0
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 136
-    mov edx, 92
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Value (Bin): 8 bits from bin_lut
     lea rdi, [rel insp_val_b]
-    mov esi, INSPECTOR_X
-    mov edx, 110
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5309,16 +5576,18 @@ editor_render:
     mov byte [rel str_buf_1 + 8], 0
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 110
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_HEX_ASCII
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Value (Char): 'X'
     lea rdi, [rel insp_val_c]
-    mov esi, INSPECTOR_X
-    mov edx, 128
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5336,24 +5605,28 @@ editor_render:
     mov byte [rel str_buf_1 + 2], 0
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 128
-    mov edx, 128
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_HEX_SPECIAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Section: INTEGERS
+    add r14d, [rel cur_sec_gap]
     lea rdi, [rel insp_sec_int]
-    mov esi, INSPECTOR_X
-    mov edx, 150
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; uint8
     lea rdi, [rel insp_u8]
-    mov esi, INSPECTOR_X
-    mov edx, 170
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5363,16 +5636,18 @@ editor_render:
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 170
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; int8
     lea rdi, [rel insp_s8]
-    mov esi, INSPECTOR_X
-    mov edx, 188
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5382,11 +5657,13 @@ editor_render:
     call format_dec_int64
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 188
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; uint16 & int16 (if offset + 1 < file_size)
     mov rax, rbx
@@ -5398,8 +5675,8 @@ editor_render:
     movzx r13d, word [rax + rbx]
 
     lea rdi, [rel insp_u16]
-    mov esi, INSPECTOR_X
-    mov edx, 206
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5409,15 +5686,17 @@ editor_render:
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 206
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     lea rdi, [rel insp_s16]
-    mov esi, INSPECTOR_X
-    mov edx, 224
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5427,11 +5706,13 @@ editor_render:
     call format_dec_int64
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 224
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
 .skip_16:
     ; uint32 & int32 (if offset + 3 < file_size)
@@ -5441,32 +5722,34 @@ editor_render:
     jae .skip_32
 
     mov rax, [rel file_ptr]
-    mov r14d, dword [rax + rbx]
+    mov r13d, dword [rax + rbx]
 
     lea rdi, [rel insp_u32]
-    mov esi, INSPECTOR_X
-    mov edx, 242
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
     lea rdi, [rel str_buf_1]
-    mov rsi, r14
+    mov rsi, r13
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 242
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
     jmp .skip_32
 
 .render_eof_inspector:
     ; Inspector Offset (Hex)
     lea rdi, [rel insp_off_h]
-    mov esi, INSPECTOR_X
-    mov edx, 56
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5476,16 +5759,18 @@ editor_render:
     call format_hex_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 136
-    mov edx, 56
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Inspector Offset (Dec)
     lea rdi, [rel insp_off_d]
-    mov esi, INSPECTOR_X
-    mov edx, 74
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5495,40 +5780,46 @@ editor_render:
     call format_dec_qword
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 74
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_INSP_VAL
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Value (Hex): [EOF / Append Mode]
     lea rdi, [rel insp_val_h]
-    mov esi, INSPECTOR_X
-    mov edx, 92
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
     lea rdi, [rel insp_eof_lbl]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 92
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
 .skip_32:
     ; File stats section
+    add r14d, [rel cur_sec_gap]
     lea rdi, [rel insp_sec_file]
-    mov esi, INSPECTOR_X
-    mov edx, 266
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Human Size
     lea rdi, [rel insp_size]
-    mov esi, INSPECTOR_X
-    mov edx, 286
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5538,16 +5829,18 @@ editor_render:
     call format_size_human
 
     lea rdi, [rel str_buf_1]
-    mov esi, INSPECTOR_X + 120
-    mov edx, 286
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Mode (HEX or ASCII)
     lea rdi, [rel insp_mode]
-    mov esi, INSPECTOR_X
-    mov edx, 304
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
     mov ecx, COLOR_INSP_LABEL
     mov r8d, COLOR_PANEL_BG
     call draw_string
@@ -5561,40 +5854,27 @@ editor_render:
     lea rdi, [rel insp_mode_asc]
     mov ecx, COLOR_HEX_ASCII
 .draw_mode_lbl:
-    mov esi, INSPECTOR_X + 120
-    mov edx, 304
+    mov esi, [rel cur_inspector_x]
+    add esi, [rel cur_insp_col_val]
+    mov edx, r14d
     mov r8d, COLOR_PANEL_BG
     call draw_string
+    add r14d, [rel cur_line_h]
 
     ; Render Diff Inspector if in diff mode
+    mov edi, r14d
     call render_diff_inspector
+    mov r14d, eax
 
     ; Render Selection stats in inspector (if selection active)
+    mov edi, r14d
     call render_selection_inspector
+    mov r14d, eax
 
-    ; Shortcuts Cheat Sheet start Y coordinate
-    mov r14d, 330
-    cmp dword [rel is_diff_mode], 1
-    jne .chk_has_sel
-    mov r14d, 442
-    cmp dword [rel has_selection], 1
-    jne .chk_cs_start
-    add r14d, 46
-    jmp .chk_cs_start
-
-.chk_has_sel:
-    cmp dword [rel has_selection], 1
-    jne .chk_cs_start
-    mov r14d, 390
-
-.chk_cs_start:
-    cmp dword [rel last_checksum_valid], 1
-    jne .shortcuts_start
-    add r14d, 70                      ; Shift down for checksums block
-
-.shortcuts_start:
+    ; Shortcuts Cheat Sheet
+    add r14d, [rel cur_sec_gap]
     lea rdi, [rel insp_sec_help]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_INSP_TITLE
     mov r8d, COLOR_PANEL_BG
@@ -5604,57 +5884,105 @@ editor_render:
     jne .draw_normal_shortcuts
 
     ; Diff Mode Shortcuts
-    add r14d, 18
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h_diff_nav]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_DIFF_PEER
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h_diff_flip]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_DIFF_PEER
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h5]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h_save_as]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h_sel]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_HEX_ASCII
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h10]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
-    lea rdi, [rel insp_h5]
-    mov esi, INSPECTOR_X
-    mov edx, r14d
-    mov ecx, COLOR_TEXT_DIM
-    mov r8d, COLOR_PANEL_BG
-    call draw_string
-
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h6]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h9]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
@@ -5662,89 +5990,157 @@ editor_render:
     jmp .render_status_bar
 
 .draw_normal_shortcuts:
-    add r14d, 18
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h5]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h_save_as]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h6]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h7]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h8]
+    mov esi, [rel cur_inspector_x]
+    mov edx, r14d
+    mov ecx, COLOR_TEXT_DIM
+    mov r8d, COLOR_PANEL_BG
+    call draw_string
+
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h_sel]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_HEX_ASCII
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h10]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
-    lea rdi, [rel insp_h1]
-    mov esi, INSPECTOR_X
-    mov edx, r14d
-    mov ecx, COLOR_TEXT_DIM
-    mov r8d, COLOR_PANEL_BG
-    call draw_string
-
-    add r14d, 16
-    lea rdi, [rel insp_h2]
-    mov esi, INSPECTOR_X
-    mov edx, r14d
-    mov ecx, COLOR_TEXT_DIM
-    mov r8d, COLOR_PANEL_BG
-    call draw_string
-
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h3]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h4]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
-    lea rdi, [rel insp_h5]
-    mov esi, INSPECTOR_X
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h1]
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
-    lea rdi, [rel insp_h6]
-    mov esi, INSPECTOR_X
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
+    lea rdi, [rel insp_h2]
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
     call draw_string
 
-    add r14d, 16
-    lea rdi, [rel insp_h7]
-    mov esi, INSPECTOR_X
-    mov edx, r14d
-    mov ecx, COLOR_TEXT_DIM
-    mov r8d, COLOR_PANEL_BG
-    call draw_string
-
-    add r14d, 16
-    lea rdi, [rel insp_h8]
-    mov esi, INSPECTOR_X
-    mov edx, r14d
-    mov ecx, COLOR_TEXT_DIM
-    mov r8d, COLOR_PANEL_BG
-    call draw_string
-
-    add r14d, 16
+    add r14d, [rel cur_line_h]
+    mov eax, [rel win_h]
+    sub eax, [rel cur_status_h]
+    sub eax, [rel cur_line_h]
+    cmp r14d, eax
+    jg .render_status_bar
     lea rdi, [rel insp_h9]
-    mov esi, INSPECTOR_X
+    mov esi, [rel cur_inspector_x]
     mov edx, r14d
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_PANEL_BG
@@ -5755,7 +6151,7 @@ editor_render:
     ; --------------------------------------------------------------------------
 .render_status_bar:
     mov r12d, [rel win_h]
-    sub r12d, STATUS_H
+    sub r12d, [rel cur_status_h]
 
     cmp dword [rel editor_mode], MODE_NORMAL
     jne .render_modal_bar
@@ -5772,8 +6168,11 @@ editor_render:
     ; Line 1: status_msg_buf
     lea rdi, [rel status_msg_buf]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, [rel status_msg_color]
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -5781,8 +6180,12 @@ editor_render:
     ; Line 2: Help bar
     lea rdi, [rel status_help_bar]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 28
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
+    add edx, [rel cur_line_h]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -5801,8 +6204,11 @@ editor_render:
     ; Goto Mode Prompt:
     lea rdi, [rel prompt_goto]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_PROMPT_FG
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -5810,8 +6216,11 @@ editor_render:
     ; Draw user input string
     lea rdi, [rel input_buf]
     mov esi, 240
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PROMPT_BG
     call draw_string
@@ -5819,8 +6228,12 @@ editor_render:
     ; Line 2 help
     lea rdi, [rel prompt_goto_help]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 28
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
+    add edx, [rel cur_line_h]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -5829,24 +6242,34 @@ editor_render:
 .render_save_as_bar:
     lea rdi, [rel prompt_save_as]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_PROMPT_FG
     mov r8d, COLOR_STATUS_BG
     call draw_string
 
     lea rdi, [rel input_buf]
     mov esi, 120
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PROMPT_BG
     call draw_string
 
     lea rdi, [rel prompt_save_as_help]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 28
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
+    add edx, [rel cur_line_h]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -5855,16 +6278,23 @@ editor_render:
 .render_confirm_quit_bar:
     lea rdi, [rel prompt_confirm_quit]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_MODIFIED
     mov r8d, COLOR_STATUS_BG
     call draw_string
 
     lea rdi, [rel prompt_confirm_quit_help]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 28
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
+    add edx, [rel cur_line_h]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string
@@ -5874,24 +6304,34 @@ editor_render:
     ; Search Mode Prompt:
     lea rdi, [rel prompt_find]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_PROMPT_FG
     mov r8d, COLOR_STATUS_BG
     call draw_string
 
     lea rdi, [rel input_buf]
     mov esi, 220
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 8
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
     mov ecx, COLOR_TEXT_BRIGHT
     mov r8d, COLOR_PROMPT_BG
     call draw_string
 
     lea rdi, [rel prompt_find_help]
     mov esi, 16
+    imul esi, [rel font_scale]
     mov edx, r12d
-    add edx, 28
+    mov eax, 8
+    imul eax, [rel font_scale]
+    add edx, eax
+    add edx, [rel cur_line_h]
     mov ecx, COLOR_TEXT_DIM
     mov r8d, COLOR_STATUS_BG
     call draw_string

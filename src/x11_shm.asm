@@ -8,6 +8,7 @@
 
 extern XOpenDisplay
 extern XCreateSimpleWindow
+extern XResizeWindow
 extern XSelectInput
 extern XMapWindow
 extern XStoreName
@@ -703,6 +704,49 @@ x11_resize:
     ret
 
 ; ------------------------------------------------------------------------------
+; x11_set_window_size:
+; Requests X11 window resize via XResizeWindow, flushes display
+; edi = new_width, esi = new_height
+; ------------------------------------------------------------------------------
+global x11_set_window_size
+x11_set_window_size:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8
+
+    mov r12d, edi                     ; new_width
+    mov r13d, esi                     ; new_height
+
+    mov rax, [rel disp]
+    test rax, rax
+    jz .sw_done
+
+    mov rsi, [rel win]
+    test rsi, rsi
+    jz .sw_done
+
+    ; XResizeWindow(disp, win, width, height)
+    mov rdi, rax
+    ; rsi is win
+    mov edx, r12d
+    mov ecx, r13d
+    call XResizeWindow wrt ..plt
+
+    mov rdi, [rel disp]
+    call XFlush wrt ..plt
+
+.sw_done:
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ------------------------------------------------------------------------------
 ; x11_cleanup:
 ; Detaches SHM, frees resources, closes display
 ; ------------------------------------------------------------------------------
@@ -714,12 +758,21 @@ x11_cleanup:
     call x11_destroy_framebuffer
 
     mov rdi, [rel disp]
+    test rdi, rdi
+    jz .skip_close
+
     mov rsi, [rel win]
+    test rsi, rsi
+    jz .skip_win
     call XDestroyWindow wrt ..plt
+.skip_win:
 
     mov rdi, [rel disp]
     call XCloseDisplay wrt ..plt
+    mov qword [rel disp], 0
+    mov qword [rel win], 0
 
+.skip_close:
     pop rbp
     ret
 
