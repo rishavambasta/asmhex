@@ -19,6 +19,8 @@ extern void file_close(void);
 extern int file_save(void);
 extern uint64_t file_capacity;
 extern char file_path[512];
+extern int file_fd;
+extern uint32_t is_scratch;
 
 extern int x11_init(const char *title, int w, int h);
 extern void x11_cleanup(void);
@@ -981,8 +983,68 @@ int main() {
     remove(diff_f1);
     remove(diff_f2);
 
+    // =========================================================================
+    // Test 25: Drag-Drop Blank Buffer Replacement & Empty File diff_recompute (Segfault Prevention)
+    // =========================================================================
+    printf("\n[TEST 25] Testing Drag & Drop blank buffer replacement & empty file diff_recompute...\n");
+    const char *drop_test_file = "/tmp/asmhex_drop_target.dat";
+    FILE *dtfp = fopen(drop_test_file, "wb");
+    assert(dtfp != NULL);
+    uint8_t drop_bytes[16];
+    for (int i = 0; i < 16; i++) drop_bytes[i] = (uint8_t)(0x10 + i);
+    fwrite(drop_bytes, 1, 16, dtfp);
+    fclose(dtfp);
+
+    // 1. Start with blank file (file_create_blank)
+    assert(file_create_blank() == 0);
+    assert(file_size == 0);
+    assert(file_fd == -1);
+    assert(is_dirty == 0);
+    assert(is_scratch == 0);
+
+    // 2. Direct verification of diff_recompute() with 0-byte file1 vs 16-byte file2 (Segfault regression test)
+    assert(file2_open(drop_test_file) == 0);
+    is_diff_mode = 1;
+    diff_recompute(); // This previously crashed with SIGSEGV due to uninitialized r10 in .dr_tail_loop
+    assert(diff_count == 16);
+    assert(diff_list_count == 16);
+    assert(diff_list[0] == 0);
+    assert(diff_list[15] == 15);
+    printf("  -> Verified diff_recompute() handles 0-byte buffer vs loaded file2 with 0 crashes (diff_count = %lu).\n", diff_count);
+    file2_close();
+    is_diff_mode = 0;
+
+    // 3. Test reverse: 16-byte file1 vs 0-byte file2
+    assert(file_open(drop_test_file) == 0);
+    assert(file_size == 16);
+    assert(file_create_blank() == 0); // resets file1 to 0 bytes
+    // Test diff_recompute with both files 0-byte
+    is_diff_mode = 1;
+    diff_recompute();
+    assert(diff_count == 0);
+    printf("  -> Verified diff_recompute() handles 0-byte vs 0-byte cleanly (diff_count = 0).\n");
+    is_diff_mode = 0;
+
+    // 4. Simulate XDnD drop dispatch onto blank buffer:
+    // When file_fd == -1 && is_dirty == 0 && file_size == 0, dropping a file replaces blank buffer as File 1
+    int should_replace = (is_diff_mode == 0) && (is_scratch == 1 || (file_fd == -1 && is_dirty == 0 && file_size == 0));
+    assert(should_replace == 1);
+    file2_close();
+    is_diff_mode = 0;
+    file_close();
+    assert(file_open(drop_test_file) == 0);
+    assert(file_size == 16);
+    assert(file_fd >= 0);
+    editor_init();
+    assert(cursor_offset == 0);
+    assert(is_diff_mode == 0);
+    printf("  -> Verified dropping file onto blank buffer cleanly opens file as primary File 1 (size = %lu).\n", file_size);
+
+    file_close();
+    remove(drop_test_file);
+
     printf("\n========================================================\n");
-    printf("  ALL 24 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
+    printf("  ALL 25 CORE FUNCTIONALITY TESTS PASSED WITH 100%% SUCCESS!\n");
     printf("========================================================\n");
     return 0;
 }

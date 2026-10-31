@@ -41,13 +41,16 @@ extern file_create_scratch
 extern file_close
 extern file_path
 extern file_size
+extern file_fd
 extern is_scratch
+extern is_dirty
 
 extern file2_open
 extern file2_close
 extern file2_path
 extern file2_size
 extern is_diff_mode
+extern diff_active_file
 extern diff_recompute
 
 extern init_crc32_table
@@ -468,18 +471,39 @@ main:
     mov rdx, [rel xdnd_action_copy_atom]
     call x11_send_xdnd_finished
 
-    ; If a file is already loaded and not scratch buffer, enter Diff Mode!
-    cmp dword [rel is_scratch], 0
-    jne .drop_replace_file
+    ; Check whether to replace primary file or open as file2 (Diff Mode)
+    cmp dword [rel is_diff_mode], 1
+    je .drop_as_file2
 
-    ; Open dropped file as file 2 for comparison
+    ; If scratch buffer, replace primary file
+    cmp dword [rel is_scratch], 1
+    je .drop_replace_file
+
+    ; If file_fd == -1 and is_dirty == 0 and file_size == 0, this is an untouched blank buffer: replace primary file!
+    cmp dword [rel file_fd], -1
+    jne .drop_as_file2
+    cmp dword [rel is_dirty], 0
+    jne .drop_as_file2
+    cmp qword [rel file_size], 0
+    je .drop_replace_file
+
+.drop_as_file2:
     lea rdi, [rel drop_path_buf]
     call file2_open
     test eax, eax
-    jnz .drop_replace_file
+    jnz .drop_file2_fail
 
     mov dword [rel is_diff_mode], 1
+    mov dword [rel diff_active_file], 0
     call diff_recompute
+    call editor_render
+    call x11_flush
+    jmp .event_loop
+
+.drop_file2_fail:
+    lea rdi, [rel err_file_msg]
+    mov esi, COLOR_TEXT_DIM
+    call editor_set_status
     call editor_render
     call x11_flush
     jmp .event_loop
@@ -492,7 +516,7 @@ main:
     call file_open
     test eax, eax
     jz .drop_file_ready
-    call file_create_scratch
+    call file_create_blank
 
 .drop_file_ready:
     call editor_init

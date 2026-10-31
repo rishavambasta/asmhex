@@ -28,18 +28,22 @@ section .data
         db "================================================================", 10
     welcome_banner_len equ $ - welcome_banner
 
+    align 4
+    global file_fd
+    file_fd:        dd -1             ; File descriptor (-1 if new/unsaved)
+    global file2_fd
+    file2_fd:       dd -1             ; File 2 descriptor (-1 if closed)
+
 section .bss
     global file_ptr
     global file_size
     global file_capacity
-    global file_fd
     global is_readonly
     global is_scratch
     global file_path
     global file2_ptr
     global file2_size
     global file2_capacity
-    global file2_fd
     global is_readonly2
     global file2_path
 
@@ -49,7 +53,6 @@ section .bss
     file_ptr:       resq 1            ; Pointer to mapped memory
     file_size:      resq 1            ; Total file size in bytes
     file_capacity:  resq 1            ; Allocated memory capacity in bytes
-    file_fd:        resd 1            ; File descriptor (-1 if new/unsaved)
     is_readonly:    resd 1            ; 1 if read-only, 0 if read-write
     is_scratch:     resd 1            ; 1 if legacy scratch buffer
     file_path:      resb 512          ; Path to opened file
@@ -59,7 +62,6 @@ section .bss
     file2_ptr:      resq 1            ; Pointer to mapped memory for file 2
     file2_size:     resq 1            ; Total file 2 size in bytes
     file2_capacity: resq 1            ; Allocated capacity for file 2
-    file2_fd:       resd 1            ; File 2 descriptor
     is_readonly2:   resd 1            ; 1 if read-only, 0 if read-write
     file2_path:     resb 512          ; Path to opened file 2
     stat_buf2:      resb 144          ; struct stat buffer for file 2
@@ -593,7 +595,7 @@ file_close:
 .no_unmap:
     mov edi, [rel file_fd]
     cmp edi, 0
-    jl .no_close
+    jle .no_close
     mov rax, SYS_close
     syscall
     mov dword [rel file_fd], -1
@@ -762,7 +764,7 @@ file2_close:
 .f2_no_unmap:
     mov edi, [rel file2_fd]
     cmp edi, 0
-    jl .f2_no_close
+    jle .f2_no_close
     mov rax, SYS_close
     syscall
     mov dword [rel file2_fd], -1

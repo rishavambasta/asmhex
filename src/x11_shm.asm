@@ -951,9 +951,15 @@ x11_get_drop_file_path:
     test rax, rax
     jz .gfp_free_fail
 
+    ; r14 = end pointer (prop_data + nitems)
+    mov r14, rsi
+    add r14, rax
+
     ; rsi = prop_data string
     ; Parse URI into r12 (out_buf)
 .gfp_skip_ws:
+    cmp rsi, r14
+    jae .gfp_finish
     mov al, [rsi]
     cmp al, ' '
     je .gfp_inc_ws
@@ -970,6 +976,10 @@ x11_get_drop_file_path:
 
 .gfp_check_proto:
     ; Check if starts with "file://"
+    mov rax, r14
+    sub rax, rsi
+    cmp rax, 7
+    jb .gfp_parse_chars
     cmp dword [rsi], 0x656C6966       ; "file"
     jne .gfp_parse_chars
     cmp word [rsi + 4], 0x2F3A        ; ":/"
@@ -979,6 +989,10 @@ x11_get_drop_file_path:
     add rsi, 7                        ; skip "file://"
 
     ; Check if starts with "localhost/"
+    mov rax, r14
+    sub rax, rsi
+    cmp rax, 10
+    jb .gfp_parse_chars
     cmp dword [rsi], 0x61636F6C       ; "loca"
     jne .gfp_parse_chars
     cmp dword [rsi + 4], 0x736F686C   ; "lhos"
@@ -990,6 +1004,8 @@ x11_get_drop_file_path:
 .gfp_parse_chars:
     xor ecx, ecx                      ; ecx = output index
 .gfp_loop:
+    cmp rsi, r14
+    jae .gfp_finish
     mov al, [rsi]
     test al, al
     jz .gfp_finish
@@ -1001,6 +1017,10 @@ x11_get_drop_file_path:
     ; Check percent-encoded %XX
     cmp al, '%'
     jne .gfp_normal_char
+
+    lea rax, [rsi + 2]
+    cmp rax, r14
+    jae .gfp_normal_char
 
     movzx eax, byte [rsi + 1]
     test al, al

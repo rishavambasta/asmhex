@@ -2852,10 +2852,11 @@ diff_recompute:
     xor rbx, rbx                      ; diff count
     xor r8, r8                        ; byte index = 0
 
+    lea r10, [rel diff_list]
+
     test rcx, rcx
     jz .dr_tail
 
-    lea r10, [rel diff_list]
 .dr_cmp_loop:
     mov al, [r12 + r8]
     cmp al, [r13 + r8]
